@@ -1155,10 +1155,10 @@ function Poster({
       <div className="absolute inset-0 opacity-5 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 4px 4px, white 2px, transparent 0)', backgroundSize: '64px 64px' }}></div>
 
       {/* Top Spacing */}
-      <div className="h-64 w-full" />
+      <div className="h-40 w-full" />
 
       {/* Profile Section */}
-      <div className="w-full flex items-center gap-10 mb-16 z-10 px-16 self-start">
+      <div className="w-full flex items-center gap-10 mb-12 z-10 px-16 self-start">
         <div 
           className={cn("w-40 h-40 rounded-full overflow-hidden flex-shrink-0 relative shadow-2xl bg-gray-200")}
           style={{ border: avatarBorder ? `8px solid ${avatarBorderColor}` : 'none' }}
@@ -1218,13 +1218,13 @@ function Poster({
       </div>
 
       {/* Card Body */}
-      <div className="w-full relative z-10 flex flex-col justify-center px-16">
+      <div className="w-full relative z-10 flex flex-col justify-center px-16 mb-24">
         <div 
           className="w-full"
           style={{
             backgroundColor: showCard ? `${cardColor}${Math.round(cardTransparency * 2.55).toString(16).padStart(2, '0')}` : 'transparent',
             borderRadius: `${cardRadius}px`,
-            padding: showCard ? `${cardPadding}px` : '0px',
+            padding: `${cardPadding}px`,
             boxShadow: showCard ? '0 30px 80px -15px rgba(0,0,0,0.15)' : 'none',
           }}
         >
