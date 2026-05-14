@@ -1,0 +1,9 @@
+{
+  "name": "Story Maker",
+  "description": "Design beautiful text stories with live preview, custom templates, and advanced typography controls.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": []
+}
