@@ -15,7 +15,8 @@ import {
   Play,
   Film,
   Loader2,
-  MoveRight
+  MoveRight,
+  Plus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 // import { toPng, toCanvas } from 'html-to-image';
@@ -50,17 +51,20 @@ export default function App() {
   const [exportDuration, setExportDuration] = useState(31);
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
-  const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
+  
+  // Bulk Mode State
+  const [isBulkMode, setIsBulkMode] = useState(false);
+  const [bulkInput, setBulkInput] = useState('');
   
   // Profile State
   const [profileImage, setProfileImage] = useState('https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=400&h=400');
   const [posterName, setPosterName] = useState('Buried Bell');
   const [subtitle, setSubtitle] = useState('Will It Ring Again?');
-  const [nameSize, setNameSize] = useState(48);
-  const [nameColor, setNameColor] = useState('#4A0E0E');
+  const [nameSize, setNameSize] = useState(82);
+  const [nameColor, setNameColor] = useState('#2D0D44');
   const [nameHasBg, setNameHasBg] = useState(false);
-  const [subtitleSize, setSubtitleSize] = useState(32);
-  const [subtitleColor, setSubtitleColor] = useState('#D00000');
+  const [subtitleSize, setSubtitleSize] = useState(44);
+  const [subtitleColor, setSubtitleColor] = useState('#8148B0');
   const [subtitleHasBg, setSubtitleHasBg] = useState(false);
   const [avatarBorder, setAvatarBorder] = useState(true);
   const [avatarBorderColor, setAvatarBorderColor] = useState('#FFFFFF');
@@ -69,34 +73,35 @@ export default function App() {
   const [scribbleStyle, setScribbleStyle] = useState('none');
   
   // Typography State
-  const [storyText, setStoryText] = useState('I recently got married. My husband has an adult son. I [do not have children]. When we were talking about combining our finances and making our [wills, etc], he commented that when we [do the paperwork] for our retirement accounts, I would be the beneficiary for [most of his], but that a percentage would go to his son.');
-  const [highlightColor, setHighlightColor] = useState('#D00000');
-  const [textColor, setTextColor] = useState('#4A0E0E');
+  const [storyText, setStoryText] = useState('Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [Again?] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...');
+  const [highlightColor, setHighlightColor] = useState('#A855F7');
+  const [textColor, setTextColor] = useState('#150621');
   const [fontFamily, setFontFamily] = useState('font-serif');
   const [fontStyle, setFontStyle] = useState('normal');
   const [textAlign, setTextAlign] = useState<'left' | 'center' | 'right'>('left');
-  const [fontSize, setFontSize] = useState(42);
-  const [lineHeight, setLineHeight] = useState(1.5);
+  const [fontSize, setFontSize] = useState(62);
+  const [lineHeight, setLineHeight] = useState(1.25);
   const [letterSpacing, setLetterSpacing] = useState(0);
   const [highlightUnderline, setHighlightUnderline] = useState(false);
 
   // Background State
   const [bgStyle, setBgStyle] = useState<'solid' | 'gradient'>('solid');
-  const [bgColor, setBgColor] = useState('#FF7F50');
-  const [cardColor, setCardColor] = useState('#FFF5F1');
+  const [bgColor, setBgColor] = useState('#CEADE1');
+  const [cardColor, setCardColor] = useState('#FAF2FB');
   const [gradEnd, setGradEnd] = useState('#FF6347');
-  const [cardRadius, setCardRadius] = useState(20);
-  const [cardPadding, setCardPadding] = useState(20);
+  const [cardRadius, setCardRadius] = useState(36);
+  const [cardPadding, setCardPadding] = useState(60);
   const [cardTransparency, setCardTransparency] = useState(100);
+  const [showCard, setShowCard] = useState(true);
 
   // Footer State
   const [showFooter, setShowFooter] = useState(true);
-  const [footerText, setFooterText] = useState("Continue Reading in Comment");
+  const [footerText, setFooterText] = useState("CONTINUE READING IN COMMENT");
   const [footerBgColor, setFooterBgColor] = useState('#ffffff');
-  const [footerBgStyle, setFooterBgStyle] = useState<'none' | 'text' | 'card' | 'fill'>('none');
-  const [footerTextColor, setFooterTextColor] = useState('#4A0E0E');
+  const [footerBgStyle, setFooterBgStyle] = useState<'none' | 'text' | 'card' | 'fill'>('text');
+  const [footerTextColor, setFooterTextColor] = useState('#150621');
   const [footerFont, setFooterFont] = useState('font-merriweather');
-  const [footerFontSize, setFooterFontSize] = useState(24);
+  const [footerFontSize, setFooterFontSize] = useState(32);
 
   const previewRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -106,33 +111,37 @@ export default function App() {
     setProfileImage('https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=400&h=400');
     setPosterName('Buried Bell');
     setSubtitle('Will It Ring Again?');
-    setStoryText('I recently got married. My husband has an adult son. I [do not have children]. When we were talking about combining our finances and making our [wills, etc], he commented that when we [do the paperwork] for our retirement accounts, I would be the beneficiary for [most of his], but that a percentage would go to his son.');
-    setFooterText("Uncover Her Secrets");
-    setNameSize(64);
-    setSubtitleSize(36);
-    setFontSize(48);
-    setFooterFontSize(28);
-    setCardRadius(24);
-    setCardPadding(80);
+    setStoryText('Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [Again?] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...');
+    setFooterText("CONTINUE READING IN COMMENT");
+    setNameSize(82);
+    setSubtitleSize(44);
+    setFontSize(62);
+    setFooterFontSize(32);
+    setCardRadius(36);
+    setCardPadding(60);
     setCardTransparency(100);
     setScribbleStyle('none');
-    setFooterBgStyle('none');
+    setFooterBgStyle('text');
     setFooterBgColor('#ffffff');
-    setBgColor('#ff8a65');
+    setBgColor('#CEADE1');
     setBgStyle('solid');
-    setNameColor('#3d1111');
-    setSubtitleColor('#d32f2f');
-    setTextColor('#3d1111');
-    setFooterTextColor('#000000');
+    setCardColor('#FAF2FB');
+    setNameColor('#2D0D44');
+    setSubtitleColor('#8148B0');
+    setTextColor('#150621');
+    setHighlightColor('#A855F7');
+    setFooterTextColor('#150621');
     setAvatarBorder(true);
     setAvatarBorderColor('#ffffff');
+    setLineHeight(1.25);
+    setShowCard(true);
   };
 
   const handleNewPoster = () => {
     setPosterName('');
     setSubtitle('');
     setStoryText('');
-    setFooterText('');
+    setFooterText('CONTINUE READING IN COMMENT');
     const randomPreset = TEMPLATE_PRESETS[Math.floor(Math.random() * TEMPLATE_PRESETS.length)];
     applyPreset(randomPreset.id);
   };
@@ -284,43 +293,15 @@ export default function App() {
     }
   }, [previewRef, exportDuration]);
   
-  const handleGenerateImage = useCallback(async () => {
-    if (previewRef.current === null) return;
-    const node = previewRef.current;
-    
-    setIsExporting(true);
-    
-    const { toPng } = await import('html-to-image');
-    
-    // Smooth scroll to top of preview area to ensure user sees the progress if any
-    
-    setTimeout(() => {
-      toPng(node, { 
-        cacheBust: true,
-        pixelRatio: 2,
-        style: {
-          transform: 'scale(1)',
-          transformOrigin: 'top left',
-          width: '1080px',
-          height: '1920px'
-        }
-      })
-      .then((dataUrl) => {
-        setGeneratedImageUrl(dataUrl);
-        setIsExporting(false);
-        // Alert user or scroll to image?
-      })
-      .catch((err) => {
-        console.error('Generation failed', err);
-        setIsExporting(false);
-      });
-    }, 500);
-  }, [previewRef]);
-
   const handleRandomHighlight = () => {
-    // Remove existing highlights first
-    const cleanText = storyText.replace(/\[|\]/g, '');
-    setStoryText(getRandomHighlights(cleanText));
+    if (isBulkMode) {
+      const stories = bulkInput.split('\n\n').filter(s => s.trim().length > 0);
+      const highlighted = stories.map(s => getRandomHighlights(s.replace(/\[|\]/g, ''))).join('\n\n');
+      setBulkInput(highlighted);
+    } else {
+      const cleanText = storyText.replace(/\[|\]/g, '');
+      setStoryText(getRandomHighlights(cleanText));
+    }
   };
 
   const renderStoryText = (text: string) => {
@@ -359,6 +340,21 @@ export default function App() {
     { label: 'PT Serif', value: 'font-pt-serif' },
     { label: 'Playfair Display', value: 'font-playfair' },
   ];
+
+  // Map through stories for bulk mode, else single
+  const storiesToRender = isBulkMode 
+    ? bulkInput.split('\n\n').filter(s => s.trim().length > 0).slice(0, 10)
+    : [storyText];
+
+  const posterProps = {
+    bgStyle, bgColor, gradEnd, avatarBorder, avatarBorderColor, profileImage, 
+    scribbleStyle, nameFont, nameHasBg, nameSize, nameColor, posterName, 
+    subFont, subtitleHasBg, subtitleSize, subtitleColor, subtitle, 
+    cardColor, cardTransparency, cardRadius, cardPadding, fontFamily, 
+    fontSize, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
+    showFooter, footerFont, footerBgStyle, footerBgColor, footerTextColor, 
+    footerFontSize, footerText, renderStoryText, showCard
+  };
 
   return (
     <div className="flex h-screen bg-[#0f1115] text-white font-sans overflow-hidden">
@@ -541,17 +537,28 @@ export default function App() {
                 {/* Template Preset */}
                 <div>
                   <label className="text-[10px] uppercase tracking-wider text-gray-500 font-bold block mb-2">Template Preset</label>
-                  <div className="relative">
+                  <div className="relative group">
                     <select 
                       value={selectedPresetId}
                       onChange={(e) => applyPreset(e.target.value)}
-                      className="w-full bg-[#2a2d35] border border-[#353941] rounded px-3 py-2 text-sm appearance-none outline-none focus:border-blue-500"
+                      className="w-full bg-[#1c2229] border border-[#2a2d35] rounded-xl px-4 py-3 text-sm appearance-none outline-none focus:border-blue-500/50 transition-all hover:bg-[#212830] cursor-pointer text-gray-300"
                     >
-                      {TEMPLATE_PRESETS.map(preset => (
-                        <option key={preset.id} value={preset.id}>{preset.name}</option>
-                      ))}
+                      {['Bold', 'Minimal', 'Warm', 'Cool', 'Dark'].map((category) => {
+                        const categoryPresets = TEMPLATE_PRESETS.filter(p => p.category === category);
+                        if (categoryPresets.length === 0) return null;
+                        
+                        return (
+                          <optgroup key={category} label={category.toUpperCase()} className="bg-[#1c2229] text-gray-500 font-bold">
+                            {categoryPresets.map((preset) => (
+                              <option key={preset.id} value={preset.id} className="text-gray-200 py-2">
+                                {preset.name}
+                              </option>
+                            ))}
+                          </optgroup>
+                        );
+                      })}
                     </select>
-                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+                    <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none group-focus-within:text-blue-500 transition-colors" />
                   </div>
                 </div>
 
@@ -747,12 +754,26 @@ export default function App() {
                 </div>
 
                 <div className="text-center font-bold text-[10px] text-gray-600 tracking-widest border-t border-b border-[#2a2d35] py-2 uppercase">
+                  MODE SELECTION
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-400">Bulk Mode (up to 10)</span>
+                  <div 
+                    onClick={() => setIsBulkMode(!isBulkMode)}
+                    className={cn("w-10 h-5 rounded-full relative cursor-pointer transition-colors", isBulkMode ? "bg-blue-500" : "bg-[#2a2d35]")}
+                  >
+                    <div className={cn("absolute top-1 w-3 h-3 bg-white rounded-full transition-all", isBulkMode ? "left-6" : "left-1")}></div>
+                  </div>
+                </div>
+
+                <div className="text-center font-bold text-[10px] text-gray-600 tracking-widest border-t border-b border-[#2a2d35] py-2 uppercase">
                   TYPOGRAPHY
                 </div>
 
                 <div>
                   <div className="flex justify-between items-center mb-1">
-                    <label className="text-xs text-gray-400">Story Content</label>
+                    <label className="text-xs text-gray-400">{isBulkMode ? 'Bulk Stories (Double line break between stories)' : 'Story Content'}</label>
                     <button 
                       onClick={handleRandomHighlight}
                       className="flex items-center gap-1.5 px-2 py-1 bg-[#2a2d35] hover:bg-[#353941] rounded text-[10px] text-blue-400 hover:text-blue-300 transition-all font-bold"
@@ -760,13 +781,23 @@ export default function App() {
                       <Zap size={10} /> RANDOM HIGHLIGHT
                     </button>
                   </div>
-                  <textarea 
-                    value={storyText}
-                    onChange={(e) => setStoryText(e.target.value)}
-                    rows={6}
-                    placeholder="Type your story here."
-                    className="w-full bg-[#2a2d35] border border-[#353941] rounded px-3 py-2 text-sm outline-none focus:border-blue-500 resize-none"
-                  />
+                  {isBulkMode ? (
+                    <textarea 
+                      value={bulkInput}
+                      onChange={(e) => setBulkInput(e.target.value)}
+                      rows={10}
+                      placeholder="Story 1&#10;&#10;Story 2..."
+                      className="w-full bg-[#2a2d35] border border-[#353941] rounded px-3 py-2 text-sm outline-none focus:border-blue-500 resize-none font-mono"
+                    />
+                  ) : (
+                    <textarea 
+                      value={storyText}
+                      onChange={(e) => setStoryText(e.target.value)}
+                      rows={6}
+                      placeholder="Type your story here."
+                      className="w-full bg-[#2a2d35] border border-[#353941] rounded px-3 py-2 text-sm outline-none focus:border-blue-500 resize-none"
+                    />
+                  )}
                 </div>
 
                 <div>
@@ -879,27 +910,61 @@ export default function App() {
                   </div>
                 </div>
 
+                <div className="text-center font-bold text-[10px] text-gray-600 tracking-widest border-t border-b border-[#2a2d35] py-2 uppercase">
+                  CARD SETTINGS
+                </div>
+
                 <div className="space-y-4">
-                  <div>
-                    <div className="flex justify-between text-xs text-gray-400 mb-1">
-                      <span>Card Radius</span>
-                      <span>{cardRadius}px</span>
+                  <div className="flex items-center justify-between p-2 bg-[#2a2d35]/30 rounded-lg">
+                    <div className="flex items-center gap-2">
+                       <div 
+                        onClick={() => setShowCard(!showCard)}
+                        className={cn("w-10 h-5 rounded-full relative cursor-pointer transition-colors", showCard ? "bg-green-500" : "bg-[#2a2d35]")}
+                      >
+                        <div className={cn("absolute top-1 w-3 h-3 bg-white rounded-full transition-all", showCard ? "left-6" : "left-1")}></div>
+                      </div>
+                      <span className="text-xs text-gray-400">Card container active</span>
                     </div>
-                    <input type="range" min="0" max="60" value={cardRadius} onChange={(e) => setCardRadius(parseInt(e.target.value))} className="w-full" />
+                    {!showCard && (
+                       <button 
+                        onClick={() => setShowCard(true)}
+                        className="text-[10px] text-blue-400 hover:underline uppercase font-bold"
+                       >
+                         Enable
+                       </button>
+                    )}
+                    {showCard && (
+                       <button 
+                        onClick={() => setShowCard(false)}
+                        className="text-[10px] text-red-400 hover:underline uppercase font-bold flex items-center gap-1"
+                       >
+                         <Plus className="rotate-45" size={10} /> REMOVE CARD
+                       </button>
+                    )}
                   </div>
-                  <div>
-                    <div className="flex justify-between text-xs text-gray-400 mb-1">
-                      <span>Card Padding</span>
-                      <span>{cardPadding}px</span>
+
+                  <div className={cn("space-y-4 transition-all duration-300", !showCard && "opacity-20 pointer-events-none grayscale")}>
+                    <div>
+                      <div className="flex justify-between text-xs text-gray-400 mb-1">
+                        <span>Card Radius</span>
+                        <span>{cardRadius}px</span>
+                      </div>
+                      <input type="range" min="0" max="60" value={cardRadius} onChange={(e) => setCardRadius(parseInt(e.target.value))} className="w-full" />
                     </div>
-                    <input type="range" min="10" max="40" value={cardPadding} onChange={(e) => setCardPadding(parseInt(e.target.value))} className="w-full" />
-                  </div>
-                  <div>
-                    <div className="flex justify-between text-xs text-gray-400 mb-1">
-                      <span>Card Transparency</span>
-                      <span>{cardTransparency}%</span>
+                    <div>
+                      <div className="flex justify-between text-xs text-gray-400 mb-1">
+                        <span>Card Padding</span>
+                        <span>{cardPadding}px</span>
+                      </div>
+                      <input type="range" min="10" max="40" value={cardPadding} onChange={(e) => setCardPadding(parseInt(e.target.value))} className="w-full" />
                     </div>
-                    <input type="range" min="0" max="100" value={cardTransparency} onChange={(e) => setCardTransparency(parseInt(e.target.value))} className="w-full" />
+                    <div>
+                      <div className="flex justify-between text-xs text-gray-400 mb-1">
+                        <span>Card Transparency</span>
+                        <span>{cardTransparency}%</span>
+                      </div>
+                      <input type="range" min="0" max="100" value={cardTransparency} onChange={(e) => setCardTransparency(parseInt(e.target.value))} className="w-full" />
+                    </div>
                   </div>
                 </div>
               </motion.div>
@@ -1008,14 +1073,6 @@ export default function App() {
               <Download size={16} /> Download
             </button>
           </div>
-          <button 
-            onClick={handleGenerateImage}
-            disabled={isExporting}
-            className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold py-3 rounded transition-colors uppercase disabled:opacity-50"
-          >
-            {isExporting ? <Loader2 size={16} className="animate-spin" /> : <ImageIcon size={16} />}
-            Generate Image
-          </button>
         </div>
       </div>
 
@@ -1033,190 +1090,189 @@ export default function App() {
         </div>
 
         {/* Preview Area */}
-        <div className="flex-1 flex items-center justify-center p-4 overflow-auto bg-[#0a0c10]">
-          <div className="relative overflow-visible" style={{ width: '356px', height: '633px' }}> {/* 1080*0.33 x 1920*0.33 */}
-            <div 
-              ref={previewRef}
-              id="story-container"
-              className="relative shadow-2xl overflow-hidden flex flex-col items-center"
-              style={{ 
-                width: '1080px', 
-                height: '1920px',
-                background: bgStyle === 'solid' ? bgColor : `linear-gradient(to bottom, ${bgColor}, ${gradEnd})`,
-                transform: 'scale(0.33)',
-                transformOrigin: 'top left',
-              }}
-            >
-              {/* Design Elements */}
-              <div className="absolute inset-0 opacity-10 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 4px 4px, white 2px, transparent 0)', backgroundSize: '48px 48px' }}></div>
-  
-              {/* Top Spacing */}
-              <div className="h-40 w-full" />
-
-              {/* Profile Section */}
-              <div className="w-full flex items-center gap-8 mb-12 z-10 px-16 self-start">
-                  <div 
-                    className={cn("w-32 h-32 rounded-full overflow-hidden flex-shrink-0 relative shadow-xl bg-gray-200")}
-                    style={{ border: avatarBorder ? `6px solid ${avatarBorderColor}` : 'none' }}
-                  >
-                  <img 
-                    src={profileImage} 
-                    alt="Profile" 
-                    className={cn(
-                      "w-full h-full object-cover",
-                      scribbleStyle === 'blur' && "blur-[6px] scale-110",
-                      scribbleStyle === 'mosaic' && "contrast-150 brightness-110 blur-[2px] opacity-70"
-                    )} 
-                    referrerPolicy="no-referrer" 
-                    crossOrigin="anonymous" 
-                  />
-                  {scribbleStyle === 'solid' && (
-                    <div className="absolute inset-0 bg-white/40 backdrop-blur-sm flex items-center justify-center">
-                       <div className="w-full h-[30%] bg-blue-500/80 rotate-[-15deg]"></div>
-                    </div>
-                  )}
-                  {scribbleStyle === 'squiggle' && (
-                     <div className="absolute inset-0 flex items-center justify-center bg-black/10">
-                        <svg className="w-full h-full text-blue-500 opacity-80" viewBox="0 0 100 100">
-                           <path d="M 0 50 Q 25 30 50 50 T 100 50" fill="none" stroke="currentColor" strokeWidth="15" />
-                           <path d="M 0 30 Q 25 10 50 30 T 100 30" fill="none" stroke="currentColor" strokeWidth="15" />
-                           <path d="M 0 70 Q 25 50 50 70 T 100 70" fill="none" stroke="currentColor" strokeWidth="15" />
-                        </svg>
-                     </div>
-                  )}
-                </div>
-              <div className="flex flex-col justify-center">
-                <div 
-                  className={cn("inline-block rounded px-1", nameFont, nameHasBg ? "bg-white/20 backdrop-blur-sm" : "")}
-                  style={{ 
-                    fontSize: `${nameSize}px`, 
-                    color: nameColor,
-                    fontWeight: '700',
-                    lineHeight: 1.1
-                  }}
-                >
-                  {posterName}
-                </div>
-                <div 
-                  className={cn("block mt-1.5 rounded px-1", subFont, subtitleHasBg ? "bg-white/20 backdrop-blur-sm" : "")}
-                  style={{ 
-                    fontSize: `${subtitleSize}px`, 
-                    color: subtitleColor,
-                    opacity: 0.9,
-                    lineHeight: 1.1
-                  }}
-                >
-                  {subtitle}
-                </div>
-              </div>
-            </div>
-
-            {/* Card Body */}
-            <div 
-              className="w-full relative z-10 flex flex-col justify-center px-16"
-            >
-              <div 
-                className="w-full"
-                style={{
-                  backgroundColor: `${cardColor}${Math.round(cardTransparency * 2.55).toString(16).padStart(2, '0')}`,
-                  borderRadius: `${cardRadius}px`,
-                  padding: `${cardPadding}px`,
-                  boxShadow: '0 20px 60px -15px rgba(0,0,0,0.25)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  transition: 'all 0.3s ease',
-                }}
-              >
-                <div 
-                  className={cn(fontFamily)}
-                  style={{ 
-                    fontSize: `${fontSize}px`,
-                    color: textColor,
-                    textAlign: textAlign,
-                    lineHeight: lineHeight,
-                    letterSpacing: `${letterSpacing}px`,
-                    fontWeight: fontStyle === 'bold' ? 'bold' : 'normal',
-                    fontStyle: fontStyle === 'italic' ? 'italic' : 'normal',
-                    whiteSpace: 'pre-wrap',
-                  }}
-                >
-                  {renderStoryText(storyText)}
-                </div>
-              </div>
-            </div>
-
-            {/* Footer */}
-            {showFooter && (
-              <div className="w-full mt-auto mb-32 flex justify-center z-10">
-                <div 
-                  className={cn(
-                    "py-6 px-14 rounded-lg text-center transition-all flex items-center justify-center gap-4", 
-                    footerFont,
-                    footerBgStyle === 'card' && "w-[calc(100%-128px)]",
-                    footerBgStyle === 'fill' && "absolute bottom-0 left-0 right-0 py-12"
-                  )}
-                  style={{ 
-                    backgroundColor: footerBgColor,
-                    color: footerTextColor,
-                    fontSize: `${footerFontSize}px`,
-                    fontWeight: '900',
-                    letterSpacing: '5px',
-                    borderRadius: footerBgStyle === 'text' ? '12px' : '4px',
-                    textTransform: 'uppercase',
-                    boxShadow: '0 12px 35px -8px rgba(0,0,0,0.3)'
-                  }}
-                >
-                  {footerText}
-                  <MoveRight size={footerFontSize * 1.2} />
-                </div>
-              </div>
-            )}
-            
-            {/* Reel scale dummy for stability */}
-          </div>
-          </div>
-          
-          {/* Generated Image Section */}
-          <AnimatePresence>
-            {generatedImageUrl && (
-              <motion.div 
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="w-full mt-12 p-8 border-t border-[#1a1d23] flex flex-col items-center"
-              >
-                <div className="flex items-center justify-between w-full max-w-lg mb-4">
-                  <h3 className="text-lg font-bold flex items-center gap-2">
-                    <ImageIcon size={20} className="text-blue-400" />
-                    Generated Image
-                  </h3>
-                  <button 
-                    onClick={() => setGeneratedImageUrl(null)}
-                    className="text-gray-500 hover:text-white transition-colors"
-                  >
-                    <X size={20} />
-                  </button>
-                </div>
-                <div className="relative group max-w-lg">
-                  <img 
-                    src={generatedImageUrl} 
-                    alt="Generated Story" 
-                    className="w-full rounded-xl shadow-2xl border border-[#2a2d35]"
-                  />
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-xl">
-                    <a 
-                      href={generatedImageUrl} 
-                      download={`generated-story-${Date.now()}.png`}
-                      className="bg-white text-black px-6 py-2 rounded-full font-bold shadow-lg hover:scale-105 transition-transform flex items-center gap-2"
-                    >
-                      <Download size={18} /> Download High Res
-                    </a>
+        <div className="flex-1 flex flex-col items-center p-8 overflow-auto bg-[#0a0c10] gap-12">
+          {storiesToRender.map((story, index) => (
+            <div key={index} className="flex flex-col items-center gap-4">
+              {isBulkMode && (
+                <div className="flex items-center gap-3 self-start">
+                   <div className="px-3 py-1 bg-[#1a1d23] border border-[#2a2d35] rounded-full text-[10px] font-bold text-blue-400 uppercase tracking-widest">
+                    CARD #{index + 1}
                   </div>
+                  <div className="h-px w-32 bg-gradient-to-r from-[#2a2d35] to-transparent" />
                 </div>
-                <p className="mt-4 text-xs text-gray-500">This is a full resolution render of your story.</p>
-              </motion.div>
-            )}
-          </AnimatePresence>
+              )}
+              <div 
+                className="relative overflow-visible shadow-[0_40px_100px_-20px_rgba(0,0,0,0.5)] rounded-2xl" 
+                style={{ width: '356px', height: '633px' }}
+              >
+                <Poster 
+                  {...posterProps} 
+                  storyText={story} 
+                  innerRef={index === 0 ? previewRef : null} 
+                />
+              </div>
+            </div>
+          ))}
+          
+          {isBulkMode && storiesToRender.length === 0 && (
+            <div className="flex flex-col items-center justify-center h-full text-gray-600 opacity-50">
+              <Plus size={48} className="mb-4" />
+              <p className="font-bold text-lg">Input some stories to see cards</p>
+            </div>
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Sub-component for clean rendering
+function Poster({ 
+  innerRef, storyText, bgStyle, bgColor, gradEnd, avatarBorder, avatarBorderColor,
+  profileImage, scribbleStyle, nameFont, nameHasBg, nameSize, nameColor,
+  posterName, subFont, subtitleHasBg, subtitleSize, subtitleColor, subtitle,
+  cardColor, cardTransparency, cardRadius, cardPadding, fontFamily, fontSize,
+  textColor, textAlign, lineHeight, letterSpacing, fontStyle, showFooter,
+  footerFont, footerBgStyle, footerBgColor, footerTextColor, footerFontSize,
+  footerText, renderStoryText, showCard
+}: any) {
+  return (
+    <div 
+      ref={innerRef}
+      className="relative overflow-hidden flex flex-col items-center h-full w-full"
+      style={{ 
+        width: '1080px', 
+        height: '1920px',
+        background: bgStyle === 'solid' ? bgColor : `linear-gradient(to bottom, ${bgColor}, ${gradEnd})`,
+        transform: 'scale(0.33)',
+        transformOrigin: 'top left',
+        position: 'absolute',
+        top: 0,
+        left: 0
+      }}
+    >
+      {/* Design Elements */}
+      <div className="absolute inset-0 opacity-5 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 4px 4px, white 2px, transparent 0)', backgroundSize: '64px 64px' }}></div>
+
+      {/* Top Spacing */}
+      <div className="h-64 w-full" />
+
+      {/* Profile Section */}
+      <div className="w-full flex items-center gap-10 mb-16 z-10 px-16 self-start">
+        <div 
+          className={cn("w-40 h-40 rounded-full overflow-hidden flex-shrink-0 relative shadow-2xl bg-gray-200")}
+          style={{ border: avatarBorder ? `8px solid ${avatarBorderColor}` : 'none' }}
+        >
+          <img 
+            src={profileImage} 
+            alt="Profile" 
+            className={cn(
+              "w-full h-full object-cover",
+              scribbleStyle === 'blur' && "blur-[6px] scale-110",
+              scribbleStyle === 'mosaic' && "contrast-150 brightness-110 blur-[2px] opacity-70"
+            )} 
+            referrerPolicy="no-referrer" 
+            crossOrigin="anonymous" 
+          />
+          {scribbleStyle === 'solid' && (
+            <div className="absolute inset-0 bg-white/40 backdrop-blur-sm flex items-center justify-center">
+                <div className="w-full h-[30%] bg-blue-500/80 rotate-[-15deg]"></div>
+            </div>
+          )}
+          {scribbleStyle === 'squiggle' && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/10">
+                <svg className="w-full h-full text-blue-500 opacity-80" viewBox="0 0 100 100">
+                    <path d="M 0 50 Q 25 30 50 50 T 100 50" fill="none" stroke="currentColor" strokeWidth="15" />
+                    <path d="M 0 30 Q 25 10 50 30 T 100 30" fill="none" stroke="currentColor" strokeWidth="15" />
+                    <path d="M 0 70 Q 25 50 50 70 T 100 70" fill="none" stroke="currentColor" strokeWidth="15" />
+                </svg>
+              </div>
+          )}
+        </div>
+        <div className="flex flex-col justify-center">
+          <div 
+            className={cn("inline-block rounded px-1 text-ellipsis overflow-hidden whitespace-nowrap max-w-[800px]", nameFont, nameHasBg ? "bg-white/20 backdrop-blur-sm" : "")}
+            style={{ 
+              fontSize: `${nameSize}px`, 
+              color: nameColor,
+              fontWeight: '800',
+              lineHeight: 1,
+              letterSpacing: '-1px'
+            }}
+          >
+            {posterName}
+          </div>
+          <div 
+            className={cn("block mt-2 rounded px-1", subFont, subtitleHasBg ? "bg-white/20 backdrop-blur-sm" : "")}
+            style={{ 
+              fontSize: `${subtitleSize}px`, 
+              color: subtitleColor,
+              opacity: 0.9,
+              lineHeight: 1,
+              fontWeight: '500'
+            }}
+          >
+            {subtitle}
+          </div>
+        </div>
+      </div>
+
+      {/* Card Body */}
+      <div className="w-full relative z-10 flex flex-col justify-center px-16">
+        <div 
+          className="w-full"
+          style={{
+            backgroundColor: showCard ? `${cardColor}${Math.round(cardTransparency * 2.55).toString(16).padStart(2, '0')}` : 'transparent',
+            borderRadius: `${cardRadius}px`,
+            padding: showCard ? `${cardPadding}px` : '0px',
+            boxShadow: showCard ? '0 30px 80px -15px rgba(0,0,0,0.15)' : 'none',
+          }}
+        >
+          <div 
+            className={cn(fontFamily)}
+            style={{ 
+              fontSize: `${fontSize}px`,
+              color: textColor,
+              textAlign: textAlign,
+              lineHeight: lineHeight,
+              letterSpacing: `${letterSpacing}px`,
+              fontWeight: '700',
+              fontStyle: fontStyle === 'italic' ? 'italic' : 'normal',
+              whiteSpace: 'pre-wrap',
+            }}
+          >
+            {renderStoryText(storyText)}
+          </div>
+        </div>
+      </div>
+
+      {/* Footer */}
+      {showFooter && (
+        <div className="w-full mt-auto mb-20 flex justify-center z-10">
+          <div 
+            className={cn(
+              "py-6 px-12 rounded-lg text-center transition-all flex items-center justify-center gap-6", 
+              footerFont,
+              footerBgStyle === 'card' && "w-[calc(100%-128px)]",
+              footerBgStyle === 'fill' && "absolute bottom-0 left-0 right-0 py-12"
+            )}
+            style={{ 
+              backgroundColor: footerBgColor,
+              color: footerTextColor,
+              fontSize: `${footerFontSize}px`,
+              fontWeight: '800',
+              letterSpacing: '2px',
+              borderRadius: footerBgStyle === 'text' ? '12px' : '0',
+              border: '2px solid #000000',
+              textTransform: 'uppercase',
+              boxShadow: '0 10px 30px -5px rgba(0,0,0,0.1)'
+            }}
+          >
+            {footerText}
+            <MoveRight size={footerFontSize * 1.2} strokeWidth={3} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

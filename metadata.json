@@ -1,10 +1,7 @@
 {
   "name": "Story Maker",
   "description": "Design beautiful text stories with live preview, custom templates, and advanced typography controls.",
-  "requestFramePermissions": [
-    "camera",
-    "microphone"
-  ],
+  "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]
