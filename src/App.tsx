@@ -102,6 +102,8 @@ export default function App() {
   const [footerTextColor, setFooterTextColor] = useState('#150621');
   const [footerFont, setFooterFont] = useState('font-merriweather');
   const [footerFontSize, setFooterFontSize] = useState(32);
+  const [footerBorderWidth, setFooterBorderWidth] = useState(0);
+  const [footerBorderColor, setFooterBorderColor] = useState('#000000');
 
   const previewRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -117,6 +119,8 @@ export default function App() {
     setSubtitleSize(44);
     setFontSize(62);
     setFooterFontSize(32);
+    setFooterBorderWidth(0);
+    setFooterBorderColor('#000000');
     setCardRadius(36);
     setCardPadding(60);
     setCardTransparency(100);
@@ -353,7 +357,7 @@ export default function App() {
     cardColor, cardTransparency, cardRadius, cardPadding, fontFamily, 
     fontSize, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
     showFooter, footerFont, footerBgStyle, footerBgColor, footerTextColor, 
-    footerFontSize, footerText, renderStoryText, showCard
+    footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor
   };
 
   return (
@@ -1049,6 +1053,27 @@ export default function App() {
                   </div>
                 </div>
 
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs text-gray-400 block mb-1">Border Width</label>
+                    <div className="flex items-center gap-2">
+                       <input 
+                        type="range" 
+                        min="0" 
+                        max="20" 
+                        value={footerBorderWidth} 
+                        onChange={(e) => setFooterBorderWidth(parseInt(e.target.value))} 
+                        className="flex-1" 
+                      />
+                      <span className="text-[10px] font-mono text-gray-500 w-6">{footerBorderWidth}px</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-400 block mb-1">Border Color</label>
+                    <input type="color" value={footerBorderColor} onChange={(e) => setFooterBorderColor(e.target.value)} className="w-full h-10 rounded border border-[#353941] cursor-pointer bg-transparent" />
+                  </div>
+                </div>
+
                 <button 
                   onClick={() => setFooterBgColor('transparent')}
                   className="text-[10px] text-blue-400 hover:underline"
@@ -1134,7 +1159,7 @@ function Poster({
   cardColor, cardTransparency, cardRadius, cardPadding, fontFamily, fontSize,
   textColor, textAlign, lineHeight, letterSpacing, fontStyle, showFooter,
   footerFont, footerBgStyle, footerBgColor, footerTextColor, footerFontSize,
-  footerText, renderStoryText, showCard
+  footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor
 }: any) {
   return (
     <div 
@@ -1257,15 +1282,17 @@ function Poster({
               footerBgStyle === 'fill' && "absolute bottom-0 left-0 right-0 py-12"
             )}
             style={{ 
-              backgroundColor: footerBgColor,
+              backgroundColor: footerBgStyle === 'none' ? 'transparent' : 
+                               footerBgStyle === 'card' ? cardColor : 
+                               footerBgColor,
               color: footerTextColor,
               fontSize: `${footerFontSize}px`,
               fontWeight: '800',
               letterSpacing: '2px',
               borderRadius: footerBgStyle === 'text' ? '12px' : '0',
-              border: '2px solid #000000',
+              border: footerBorderWidth > 0 ? `${footerBorderWidth}px solid ${footerBorderColor}` : 'none',
               textTransform: 'uppercase',
-              boxShadow: '0 10px 30px -5px rgba(0,0,0,0.1)'
+              boxShadow: footerBgStyle === 'none' ? 'none' : '0 10px 30px -5px rgba(0,0,0,0.1)'
             }}
           >
             {footerText}
