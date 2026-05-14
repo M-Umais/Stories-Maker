@@ -96,8 +96,10 @@ export default function App() {
   const [highlightUnderline, setHighlightUnderline] = useState(false);
 
   // Background State
-  const [bgStyle, setBgStyle] = useState<'solid' | 'gradient'>('solid');
+  const [bgStyle, setBgStyle] = useState<'solid' | 'gradient' | 'image'>('solid');
   const [bgColor, setBgColor] = useState('#CEADE1');
+  const [bgImage, setBgImage] = useState<string | null>(null);
+  const [bgImageOverlay, setBgImageOverlay] = useState(20);
   const [cardColor, setCardColor] = useState('#FAF2FB');
   const [gradEnd, setGradEnd] = useState('#FF6347');
   const [cardRadius, setCardRadius] = useState(36);
@@ -118,6 +120,8 @@ export default function App() {
 
   const previewRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const bgFileInputRef = useRef<HTMLInputElement>(null);
 
   const handleReset = () => {
     applyPreset(TEMPLATE_PRESETS[1].id);
@@ -192,6 +196,20 @@ export default function App() {
       reader.onload = (event) => {
         if (event.target?.result) {
           setProfileImage(event.target.result as string);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleBgImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          setBgImage(event.target.result as string);
+          setBgStyle('image');
         }
       };
       reader.readAsDataURL(file);
@@ -371,6 +389,7 @@ export default function App() {
     fontSize, fontWeight, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
     showFooter, footerFont, footerBgStyle, footerBgColor, footerTextColor, 
     footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor,
+    bgImage, bgImageOverlay
   };
 
   return (
@@ -380,6 +399,15 @@ export default function App() {
         type="file" 
         ref={fileInputRef} 
         onChange={handleImageUpload} 
+        className="hidden" 
+        accept="image/*"
+      />
+
+      {/* Hidden BG Image Input */}
+      <input 
+        type="file" 
+        ref={bgFileInputRef} 
+        onChange={handleBgImageUpload} 
         className="hidden" 
         accept="image/*"
       />
@@ -923,16 +951,49 @@ export default function App() {
                 className="space-y-6"
               >
                 <div>
+                  <label className="text-xs text-gray-400 block mb-2">Background Image</label>
+                  <button 
+                    onClick={() => bgFileInputRef.current?.click()}
+                    className="w-full flex items-center justify-center gap-2 bg-[#3b82f6] hover:bg-[#2563eb] text-white font-bold py-3 rounded-xl transition-all shadow-lg active:scale-[0.98]"
+                  >
+                    <Upload size={16} /> {bgImage ? 'CHANGE BACKGROUND' : 'UPLOAD BACKGROUND'}
+                  </button>
+                  {bgImage && (
+                    <p className="text-[10px] text-blue-400 mt-2 text-center font-bold animate-pulse">IMAGE UPLOADED & ACTIVE</p>
+                  )}
+                </div>
+
+                <div>
                   <label className="text-xs text-gray-400 block mb-1">Background Style</label>
                   <select 
                     value={bgStyle}
                     onChange={(e) => setBgStyle(e.target.value as any)}
                     className="w-full bg-[#2a2d35] border border-[#353941] rounded px-3 py-2 text-sm outline-none"
                   >
-                    <option value="solid">Solid</option>
+                    <option value="solid">Solid Color</option>
                     <option value="gradient">Gradient</option>
+                    <option value="image">Background Image</option>
                   </select>
                 </div>
+
+                {bgStyle === 'image' && bgImage && (
+                  <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                    <div>
+                      <div className="flex justify-between text-xs text-gray-400 mb-1">
+                        <span>Dark Overlay</span>
+                        <span>{bgImageOverlay}%</span>
+                      </div>
+                      <input 
+                        type="range" 
+                        min="0" 
+                        max="100" 
+                        value={bgImageOverlay} 
+                        onChange={(e) => setBgImageOverlay(parseInt(e.target.value))} 
+                        className="w-full accent-blue-500" 
+                      />
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex gap-4">
                   <div className="flex-1">
@@ -1195,6 +1256,7 @@ function Poster({
   fontWeight, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
   showFooter, footerFont, footerBgStyle, footerBgColor, footerTextColor, 
   footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor,
+  bgImage, bgImageOverlay
 }: any) {
   return (
     <div 
@@ -1203,7 +1265,9 @@ function Poster({
       style={{ 
         width: '1080px', 
         height: '1920px',
-        background: bgStyle === 'solid' ? bgColor : `linear-gradient(to bottom, ${bgColor}, ${gradEnd})`,
+        background: bgStyle === 'solid' ? bgColor : 
+                    bgStyle === 'gradient' ? `linear-gradient(to bottom, ${bgColor}, ${gradEnd})` : 
+                    '#000',
         transform: 'scale(0.33)',
         transformOrigin: 'top left',
         position: 'absolute',
@@ -1211,6 +1275,20 @@ function Poster({
         left: 0
       }}
     >
+      {bgStyle === 'image' && bgImage && (
+        <>
+          <img 
+            src={bgImage} 
+            alt="Background" 
+            className="absolute inset-0 w-full h-full object-cover"
+            style={{ zIndex: 0 }}
+          />
+          <div 
+            className="absolute inset-0 z-0" 
+            style={{ backgroundColor: `rgba(0,0,0,${bgImageOverlay / 100})` }}
+          />
+        </>
+      )}
       {/* Design Elements */}
       <div className="absolute inset-0 opacity-5 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 4px 4px, white 2px, transparent 0)', backgroundSize: '64px 64px' }}></div>
 
