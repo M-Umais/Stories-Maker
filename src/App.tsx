@@ -14,21 +14,13 @@ import {
   X,
   Play,
   Film,
-  Loader2
+  Loader2,
+  MoveRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { toPng, toCanvas } from 'html-to-image';
+// import { toPng, toCanvas } from 'html-to-image';
 import { cn } from './lib/utils';
 import { TEMPLATE_PRESETS, TemplatePreset } from './constants';
-
-// Safeguard for certain environments where fetch assignment fails
-try {
-  if (typeof window !== 'undefined' && !window.fetch) {
-    // Basic check, don't assign if it's already there or might fail
-  }
-} catch (e) {
-  console.warn('Fetch safeguard check failed but ignoring:', e);
-}
 
 type TabType = 'profile' | 'typography' | 'background' | 'footer';
 
@@ -57,6 +49,8 @@ export default function App() {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportDuration, setExportDuration] = useState(31);
   const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
+  const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
   
   // Profile State
   const [profileImage, setProfileImage] = useState('https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=400&h=400');
@@ -113,17 +107,25 @@ export default function App() {
     setPosterName('Buried Bell');
     setSubtitle('Will It Ring Again?');
     setStoryText('I recently got married. My husband has an adult son. I [do not have children]. When we were talking about combining our finances and making our [wills, etc], he commented that when we [do the paperwork] for our retirement accounts, I would be the beneficiary for [most of his], but that a percentage would go to his son.');
-    setFooterText("Continue Reading in Comment");
-    setNameSize(48);
-    setSubtitleSize(32);
-    setFontSize(42);
-    setFooterFontSize(24);
-    setCardRadius(20);
-    setCardPadding(60);
+    setFooterText("Uncover Her Secrets");
+    setNameSize(64);
+    setSubtitleSize(36);
+    setFontSize(48);
+    setFooterFontSize(28);
+    setCardRadius(24);
+    setCardPadding(80);
     setCardTransparency(100);
     setScribbleStyle('none');
     setFooterBgStyle('none');
     setFooterBgColor('#ffffff');
+    setBgColor('#ff8a65');
+    setBgStyle('solid');
+    setNameColor('#3d1111');
+    setSubtitleColor('#d32f2f');
+    setTextColor('#3d1111');
+    setFooterTextColor('#000000');
+    setAvatarBorder(true);
+    setAvatarBorderColor('#ffffff');
   };
 
   const handleNewPoster = () => {
@@ -171,11 +173,13 @@ export default function App() {
     }
   };
 
-  const handleDownload = useCallback((type: 'image' | 'video' = 'image') => {
+  const handleDownload = useCallback(async (type: 'image' | 'video' = 'image') => {
     if (previewRef.current === null) return;
     const node = previewRef.current;
     
     setIsExporting(true);
+    
+    const { toPng, toCanvas } = await import('html-to-image');
     
     if (type === 'image') {
       setTimeout(() => {
@@ -203,43 +207,115 @@ export default function App() {
         });
       }, 500);
     } else {
-      // Video Export (Mock/Real capture)
-      toCanvas(node, { pixelRatio: 2 })
+      // Video Export (Recording capture)
+      setExportProgress(0);
+      
+      toCanvas(node, { 
+        pixelRatio: 1, // Using 1x for video stability/performance
+        cacheBust: true,
+        style: {
+          transform: 'scale(1)',
+          transformOrigin: 'top left',
+          width: '1080px',
+          height: '1920px'
+        }
+      })
         .then((canvas) => {
           const stream = canvas.captureStream(30); // 30 FPS
-          const mediaRecorder = new MediaRecorder(stream, {
-            mimeType: 'video/webm;codecs=vp9'
-          });
           
+          let mimeType = 'video/webm;codecs=vp9';
+          if (!MediaRecorder.isTypeSupported(mimeType)) {
+            mimeType = 'video/webm';
+            if (!MediaRecorder.isTypeSupported(mimeType)) {
+              mimeType = 'video/mp4'; // fallback
+            }
+          }
+
+          const mediaRecorder = new MediaRecorder(stream, { mimeType });
           const chunks: Blob[] = [];
+          
           mediaRecorder.ondataavailable = (e) => {
             if (e.data.size > 0) chunks.push(e.data);
           };
           
           mediaRecorder.onstop = () => {
-            const blob = new Blob(chunks, { type: 'video/webm' });
+            const blob = new Blob(chunks, { type: mimeType });
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
+            const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
             link.href = url;
-            link.download = `story-video-${Date.now()}.webm`; // Using .webm as it's more reliable for MediaRecorder
+            link.download = `story-video-${Date.now()}.${extension}`;
             link.click();
+            
+            setExportProgress(0);
             setIsExporting(false);
             setIsExportModalOpen(false);
           };
           
           mediaRecorder.start();
           
-          // "Record" for the specified duration
-          setTimeout(() => {
-            mediaRecorder.stop();
-          }, exportDuration * 1000);
+          // Ensure frames are produced for the duration even if static
+          const ctx = canvas.getContext('2d');
+          const startTime = Date.now();
+          const totalMs = exportDuration * 1000;
+          
+          const intervalId = setInterval(() => {
+            const elapsed = Date.now() - startTime;
+            const progress = Math.min(100, Math.floor((elapsed / totalMs) * 100));
+            setExportProgress(progress);
+            
+            // Force frame update
+            if (ctx) {
+              const pixel = ctx.getImageData(0, 0, 1, 1);
+              ctx.putImageData(pixel, 0, 0);
+            }
+            
+            if (elapsed >= totalMs) {
+              clearInterval(intervalId);
+              mediaRecorder.stop();
+            }
+          }, 100);
         })
         .catch((err) => {
           console.error('Video export failed', err);
           setIsExporting(false);
+          setExportProgress(0);
         });
     }
   }, [previewRef, exportDuration]);
+  
+  const handleGenerateImage = useCallback(async () => {
+    if (previewRef.current === null) return;
+    const node = previewRef.current;
+    
+    setIsExporting(true);
+    
+    const { toPng } = await import('html-to-image');
+    
+    // Smooth scroll to top of preview area to ensure user sees the progress if any
+    
+    setTimeout(() => {
+      toPng(node, { 
+        cacheBust: true,
+        pixelRatio: 2,
+        style: {
+          transform: 'scale(1)',
+          transformOrigin: 'top left',
+          width: '1080px',
+          height: '1920px'
+        }
+      })
+      .then((dataUrl) => {
+        setGeneratedImageUrl(dataUrl);
+        setIsExporting(false);
+        // Alert user or scroll to image?
+      })
+      .catch((err) => {
+        console.error('Generation failed', err);
+        setIsExporting(false);
+      });
+    }, 500);
+  }, [previewRef]);
 
   const handleRandomHighlight = () => {
     // Remove existing highlights first
@@ -342,16 +418,24 @@ export default function App() {
                   <div 
                     onClick={() => !isExporting && handleDownload('video')}
                     className={cn(
-                      "p-4 rounded-xl border border-[#3b82f6]/40 bg-[#1c2229] ring-2 ring-blue-500/10 cursor-pointer hover:bg-[#252c36] group transition-all",
-                      isExporting && "opacity-50 cursor-not-allowed"
+                      "p-4 rounded-xl border relative overflow-hidden",
+                      isExporting ? "border-blue-500/50 bg-[#1c2229]" : "border-[#3b82f6]/40 bg-[#1c2229] ring-2 ring-blue-500/10 cursor-pointer hover:bg-[#252c36] group transition-all"
                     )}
                   >
+                    {isExporting && (
+                      <motion.div 
+                        initial={{ width: 0 }}
+                        animate={{ width: `${exportProgress}%` }}
+                        className="absolute bottom-0 left-0 h-1 bg-blue-500 transition-all duration-300"
+                      />
+                    )}
                     <div className="flex items-center gap-4 mb-4">
                       <div className="w-12 h-12 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center group-hover:bg-blue-500/20">
                         {isExporting ? <Loader2 size={24} className="text-blue-400 animate-spin" /> : <Film size={24} className="text-blue-400" />}
                       </div>
                       <div className="flex-1">
                         <h4 className="font-bold">Video (silent · same image)</h4>
+                        {isExporting && <p className="text-[10px] text-blue-400 font-bold uppercase tracking-widest mt-0.5">Recording... {exportProgress}%</p>}
                       </div>
                     </div>
 
@@ -366,6 +450,7 @@ export default function App() {
                       max="90" 
                       value={exportDuration} 
                       onChange={(e) => setExportDuration(parseInt(e.target.value))}
+                      disabled={isExporting}
                       className="w-full accent-blue-500" 
                     />
                     <div className="flex justify-between text-[10px] text-gray-500 font-medium">
@@ -381,7 +466,7 @@ export default function App() {
                   className="w-full flex items-center justify-center gap-2 bg-[#8ab4f8] hover:bg-[#a1c2fa] text-black font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isExporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
-                  {isExporting ? 'Exporting...' : 'Export Video'}
+                  {isExporting ? `Exporting (${exportProgress}%)...` : 'Export Video'}
                 </button>
               </div>
             </motion.div>
@@ -911,15 +996,25 @@ export default function App() {
         </div>
 
         {/* Bottom Actions */}
-        <div className="p-4 bg-[#14161b] border-t border-[#2a2d35] flex gap-2">
-           <button className="flex-1 flex items-center justify-center gap-2 bg-[#2a2d35] hover:bg-[#353941] text-xs font-bold py-3 rounded transition-colors uppercase">
-            <Save size={16} /> Save Template
-          </button>
+        <div className="p-4 bg-[#14161b] border-t border-[#2a2d35] flex flex-col gap-2">
+           <div className="flex gap-2">
+             <button className="flex-1 flex items-center justify-center gap-2 bg-[#2a2d35] hover:bg-[#353941] text-xs font-bold py-3 rounded transition-colors uppercase">
+              <Save size={16} /> Save Template
+            </button>
+            <button 
+              onClick={() => setIsExportModalOpen(true)}
+              className="flex-1 flex items-center justify-center gap-2 bg-white hover:bg-gray-200 text-black text-xs font-bold py-3 rounded transition-colors uppercase"
+            >
+              <Download size={16} /> Download
+            </button>
+          </div>
           <button 
-            onClick={() => setIsExportModalOpen(true)}
-            className="flex-1 flex items-center justify-center gap-2 bg-white hover:bg-gray-200 text-black text-xs font-bold py-3 rounded transition-colors uppercase"
+            onClick={handleGenerateImage}
+            disabled={isExporting}
+            className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold py-3 rounded transition-colors uppercase disabled:opacity-50"
           >
-            <Download size={16} /> Download
+            {isExporting ? <Loader2 size={16} className="animate-spin" /> : <ImageIcon size={16} />}
+            Generate Image
           </button>
         </div>
       </div>
@@ -943,7 +1038,7 @@ export default function App() {
             <div 
               ref={previewRef}
               id="story-container"
-              className="relative shadow-2xl overflow-hidden flex flex-col items-center p-16"
+              className="relative shadow-2xl overflow-hidden flex flex-col items-center"
               style={{ 
                 width: '1080px', 
                 height: '1920px',
@@ -955,8 +1050,11 @@ export default function App() {
               {/* Design Elements */}
               <div className="absolute inset-0 opacity-10 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 4px 4px, white 2px, transparent 0)', backgroundSize: '48px 48px' }}></div>
   
+              {/* Top Spacing */}
+              <div className="h-40 w-full" />
+
               {/* Profile Section */}
-              <div className="w-full flex items-center gap-8 mb-16 z-10 px-10 self-start">
+              <div className="w-full flex items-center gap-8 mb-12 z-10 px-16 self-start">
                   <div 
                     className={cn("w-32 h-32 rounded-full overflow-hidden flex-shrink-0 relative shadow-xl bg-gray-200")}
                     style={{ border: avatarBorder ? `6px solid ${avatarBorderColor}` : 'none' }}
@@ -1015,56 +1113,60 @@ export default function App() {
 
             {/* Card Body */}
             <div 
-              className="w-full relative z-10 flex flex-col justify-center mb-auto"
-              style={{
-                backgroundColor: `${cardColor}${Math.round(cardTransparency * 2.55).toString(16).padStart(2, '0')}`,
-                borderRadius: `${cardRadius}px`,
-                padding: `${cardPadding}px`,
-                boxShadow: '0 20px 60px -15px rgba(0,0,0,0.25)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                transition: 'all 0.3s ease',
-                flex: '1'
-              }}
+              className="w-full relative z-10 flex flex-col justify-center px-16"
             >
               <div 
-                className={cn(fontFamily)}
-                style={{ 
-                  fontSize: `${fontSize}px`,
-                  color: textColor,
-                  textAlign: textAlign,
-                  lineHeight: lineHeight,
-                  letterSpacing: `${letterSpacing}px`,
-                  fontWeight: fontStyle === 'bold' ? 'bold' : 'normal',
-                  fontStyle: fontStyle === 'italic' ? 'italic' : 'normal',
-                  whiteSpace: 'pre-wrap',
+                className="w-full"
+                style={{
+                  backgroundColor: `${cardColor}${Math.round(cardTransparency * 2.55).toString(16).padStart(2, '0')}`,
+                  borderRadius: `${cardRadius}px`,
+                  padding: `${cardPadding}px`,
+                  boxShadow: '0 20px 60px -15px rgba(0,0,0,0.25)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  transition: 'all 0.3s ease',
                 }}
               >
-                {renderStoryText(storyText)}
+                <div 
+                  className={cn(fontFamily)}
+                  style={{ 
+                    fontSize: `${fontSize}px`,
+                    color: textColor,
+                    textAlign: textAlign,
+                    lineHeight: lineHeight,
+                    letterSpacing: `${letterSpacing}px`,
+                    fontWeight: fontStyle === 'bold' ? 'bold' : 'normal',
+                    fontStyle: fontStyle === 'italic' ? 'italic' : 'normal',
+                    whiteSpace: 'pre-wrap',
+                  }}
+                >
+                  {renderStoryText(storyText)}
+                </div>
               </div>
             </div>
 
             {/* Footer */}
             {showFooter && (
-              <div className="w-full mt-24 mb-12 flex justify-center z-10">
+              <div className="w-full mt-auto mb-32 flex justify-center z-10">
                 <div 
                   className={cn(
-                    "py-5 px-12 rounded-lg text-center transition-all", 
+                    "py-6 px-14 rounded-lg text-center transition-all flex items-center justify-center gap-4", 
                     footerFont,
-                    footerBgStyle === 'card' && "w-full",
-                    footerBgStyle === 'fill' && "absolute bottom-0 left-0 right-0 py-10"
+                    footerBgStyle === 'card' && "w-[calc(100%-128px)]",
+                    footerBgStyle === 'fill' && "absolute bottom-0 left-0 right-0 py-12"
                   )}
                   style={{ 
                     backgroundColor: footerBgColor,
                     color: footerTextColor,
                     fontSize: `${footerFontSize}px`,
                     fontWeight: '900',
-                    letterSpacing: '4px',
+                    letterSpacing: '5px',
                     borderRadius: footerBgStyle === 'text' ? '12px' : '4px',
                     textTransform: 'uppercase',
-                    boxShadow: '0 8px 25px -5px rgba(0,0,0,0.2)'
+                    boxShadow: '0 12px 35px -8px rgba(0,0,0,0.3)'
                   }}
                 >
                   {footerText}
+                  <MoveRight size={footerFontSize * 1.2} />
                 </div>
               </div>
             )}
@@ -1072,6 +1174,47 @@ export default function App() {
             {/* Reel scale dummy for stability */}
           </div>
           </div>
+          
+          {/* Generated Image Section */}
+          <AnimatePresence>
+            {generatedImageUrl && (
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="w-full mt-12 p-8 border-t border-[#1a1d23] flex flex-col items-center"
+              >
+                <div className="flex items-center justify-between w-full max-w-lg mb-4">
+                  <h3 className="text-lg font-bold flex items-center gap-2">
+                    <ImageIcon size={20} className="text-blue-400" />
+                    Generated Image
+                  </h3>
+                  <button 
+                    onClick={() => setGeneratedImageUrl(null)}
+                    className="text-gray-500 hover:text-white transition-colors"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+                <div className="relative group max-w-lg">
+                  <img 
+                    src={generatedImageUrl} 
+                    alt="Generated Story" 
+                    className="w-full rounded-xl shadow-2xl border border-[#2a2d35]"
+                  />
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-xl">
+                    <a 
+                      href={generatedImageUrl} 
+                      download={`generated-story-${Date.now()}.png`}
+                      className="bg-white text-black px-6 py-2 rounded-full font-bold shadow-lg hover:scale-105 transition-transform flex items-center gap-2"
+                    >
+                      <Download size={18} /> Download High Res
+                    </a>
+                  </div>
+                </div>
+                <p className="mt-4 text-xs text-gray-500">This is a full resolution render of your story.</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
     </div>
