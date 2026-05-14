@@ -27,21 +27,31 @@ type TabType = 'profile' | 'typography' | 'background' | 'footer';
 
 // Helper to highlight random words
 const getRandomHighlights = (text: string) => {
-  const words = text.split(/\s+/);
-  if (words.length < 3) return text;
+  const parts = text.split(/(\s+)/);
+  const wordIndices: number[] = [];
+  
+  parts.forEach((part, i) => {
+    // If it's not pure whitespace, it's a word
+    if (part.trim().length > 0) {
+      wordIndices.push(i);
+    }
+  });
+
+  if (wordIndices.length < 3) return text;
   
   // Pick about 15-20% of words for highlighting, capping at exactly 8 max
-  const targetCount = Math.min(8, Math.max(3, Math.floor(words.length * 0.15)));
-  const indices = new Set<number>();
+  const targetCount = Math.min(8, Math.max(3, Math.floor(wordIndices.length * 0.15)));
+  const highlightIndices = new Set<number>();
   
   // Safety break to prevent infinite loop
   let attempts = 0;
-  while (indices.size < targetCount && attempts < 100) {
-    indices.add(Math.floor(Math.random() * words.length));
+  while (highlightIndices.size < targetCount && attempts < 100) {
+    const randomIndex = Math.floor(Math.random() * wordIndices.length);
+    highlightIndices.add(wordIndices[randomIndex]);
     attempts++;
   }
   
-  return words.map((word, i) => indices.has(i) ? `[${word}]` : word).join(' ');
+  return parts.map((part, i) => highlightIndices.has(i) ? `[${part}]` : part).join('');
 };
 
 export default function App() {
@@ -74,12 +84,13 @@ export default function App() {
   
   // Typography State
   const [storyText, setStoryText] = useState('Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [Again?] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...');
-  const [highlightColor, setHighlightColor] = useState('#A855F7');
+  const [highlightColor, setHighlightColor] = useState('#150621');
   const [textColor, setTextColor] = useState('#150621');
   const [fontFamily, setFontFamily] = useState('font-serif');
   const [fontStyle, setFontStyle] = useState('normal');
   const [textAlign, setTextAlign] = useState<'left' | 'center' | 'right'>('left');
   const [fontSize, setFontSize] = useState(62);
+  const [fontWeight, setFontWeight] = useState('700');
   const [lineHeight, setLineHeight] = useState(1.25);
   const [letterSpacing, setLetterSpacing] = useState(0);
   const [highlightUnderline, setHighlightUnderline] = useState(false);
@@ -118,6 +129,7 @@ export default function App() {
     setNameSize(82);
     setSubtitleSize(44);
     setFontSize(62);
+    setFontWeight('700');
     setFooterFontSize(32);
     setFooterBorderWidth(0);
     setFooterBorderColor('#000000');
@@ -133,7 +145,7 @@ export default function App() {
     setNameColor('#2D0D44');
     setSubtitleColor('#8148B0');
     setTextColor('#150621');
-    setHighlightColor('#A855F7');
+    setHighlightColor('#150621');
     setFooterTextColor('#150621');
     setAvatarBorder(true);
     setAvatarBorderColor('#ffffff');
@@ -312,13 +324,14 @@ export default function App() {
     const parts = text.split(/(\[.*?\])/);
     return parts.map((part, index) => {
       if (part.startsWith('[') && part.endsWith(']')) {
+        const content = part.slice(1, -1);
         return (
           <span 
             key={index} 
             style={{ color: highlightColor }} 
             className={cn("font-bold decoration-2 underline-offset-4", highlightUnderline ? "underline" : "")}
           >
-            {part.slice(1, -1)}
+            {content}
           </span>
         );
       }
@@ -355,9 +368,9 @@ export default function App() {
     scribbleStyle, nameFont, nameHasBg, nameSize, nameColor, posterName, 
     subFont, subtitleHasBg, subtitleSize, subtitleColor, subtitle, 
     cardColor, cardTransparency, cardRadius, cardPadding, fontFamily, 
-    fontSize, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
+    fontSize, fontWeight, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
     showFooter, footerFont, footerBgStyle, footerBgColor, footerTextColor, 
-    footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor
+    footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor,
   };
 
   return (
@@ -748,13 +761,23 @@ export default function App() {
               >
                 <div className="flex gap-4">
                   <div className="flex-1">
-                    <label className="text-xs text-gray-400 block mb-1">Highlight</label>
+                    <label className="text-xs text-gray-400 block mb-1">Highlight Color</label>
                     <input type="color" value={highlightColor} onChange={(e) => setHighlightColor(e.target.value)} className="w-full h-10 rounded border border-[#353941] cursor-pointer bg-transparent" />
                   </div>
                   <div className="flex-1">
                     <label className="text-xs text-gray-400 block mb-1">Text Color</label>
                     <input type="color" value={textColor} onChange={(e) => setTextColor(e.target.value)} className="w-full h-10 rounded border border-[#353941] cursor-pointer bg-transparent" />
                   </div>
+                </div>
+
+                <div className="grid grid-cols-1">
+                  <button 
+                    onClick={handleRandomHighlight}
+                    className="w-full flex items-center justify-center gap-2 bg-[#8ab4f8] hover:bg-[#a1c2fa] text-black font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98] mt-2"
+                  >
+                    <Zap size={16} /> HIGHLIGHT TEXT
+                  </button>
+                  <p className="text-[10px] text-gray-500 text-center mt-2 italic px-4">Click to randomly highlight parts of your story with the selected style.</p>
                 </div>
 
                 <div className="text-center font-bold text-[10px] text-gray-600 tracking-widest border-t border-b border-[#2a2d35] py-2 uppercase">
@@ -825,21 +848,33 @@ export default function App() {
                     >
                       <option value="normal">Normal</option>
                       <option value="italic">Italic</option>
-                      <option value="bold">Bold</option>
                     </select>
                   </div>
                    <div>
-                    <label className="text-xs text-gray-400 block mb-1">Align</label>
+                    <label className="text-xs text-gray-400 block mb-1">Weight</label>
                     <select 
-                      value={textAlign}
-                      onChange={(e) => setTextAlign(e.target.value as any)}
+                      value={fontWeight}
+                      onChange={(e) => setFontWeight(e.target.value)}
                       className="w-full bg-[#2a2d35] border border-[#353941] rounded px-3 py-2 text-sm outline-none"
                     >
-                      <option value="left">Left</option>
-                      <option value="center">Center</option>
-                      <option value="right">Right</option>
+                      <option value="300">Light</option>
+                      <option value="400">Normal</option>
+                      <option value="700">Bold</option>
                     </select>
                   </div>
+                </div>
+
+                <div>
+                   <label className="text-xs text-gray-400 block mb-1">Align</label>
+                   <select 
+                     value={textAlign}
+                     onChange={(e) => setTextAlign(e.target.value as any)}
+                     className="w-full bg-[#2a2d35] border border-[#353941] rounded px-3 py-2 text-sm outline-none"
+                   >
+                     <option value="left">Left</option>
+                     <option value="center">Center</option>
+                     <option value="right">Right</option>
+                   </select>
                 </div>
 
                 <div className="space-y-4">
@@ -1157,9 +1192,9 @@ function Poster({
   profileImage, scribbleStyle, nameFont, nameHasBg, nameSize, nameColor,
   posterName, subFont, subtitleHasBg, subtitleSize, subtitleColor, subtitle,
   cardColor, cardTransparency, cardRadius, cardPadding, fontFamily, fontSize,
-  textColor, textAlign, lineHeight, letterSpacing, fontStyle, showFooter,
-  footerFont, footerBgStyle, footerBgColor, footerTextColor, footerFontSize,
-  footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor
+  fontWeight, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
+  showFooter, footerFont, footerBgStyle, footerBgColor, footerTextColor, 
+  footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor,
 }: any) {
   return (
     <div 
@@ -1261,7 +1296,7 @@ function Poster({
               textAlign: textAlign,
               lineHeight: lineHeight,
               letterSpacing: `${letterSpacing}px`,
-              fontWeight: '700',
+              fontWeight: fontWeight,
               fontStyle: fontStyle === 'italic' ? 'italic' : 'normal',
               whiteSpace: 'pre-wrap',
             }}
