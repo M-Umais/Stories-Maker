@@ -106,6 +106,8 @@ export default function App() {
   const [cardPadding, setCardPadding] = useState(60);
   const [cardTransparency, setCardTransparency] = useState(100);
   const [showCard, setShowCard] = useState(true);
+  const [showProfile, setShowProfile] = useState(true);
+  const [showDots, setShowDots] = useState(true);
 
   // Footer State
   const [showFooter, setShowFooter] = useState(true);
@@ -122,6 +124,7 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const bgFileInputRef = useRef<HTMLInputElement>(null);
+  const fullImageInputRef = useRef<HTMLInputElement>(null);
 
   const handleReset = () => {
     applyPreset(TEMPLATE_PRESETS[1].id);
@@ -155,6 +158,9 @@ export default function App() {
     setAvatarBorderColor('#ffffff');
     setLineHeight(1.25);
     setShowCard(true);
+    setShowFooter(true);
+    setShowProfile(true);
+    setShowDots(true);
   };
 
   const handleNewPoster = () => {
@@ -164,6 +170,10 @@ export default function App() {
     setFooterText('CONTINUE READING IN COMMENT');
     const randomPreset = TEMPLATE_PRESETS[Math.floor(Math.random() * TEMPLATE_PRESETS.length)];
     applyPreset(randomPreset.id);
+    setShowCard(true);
+    setShowFooter(true);
+    setShowProfile(true);
+    setShowDots(true);
   };
 
   const applyPreset = (presetId: string) => {
@@ -210,6 +220,25 @@ export default function App() {
         if (event.target?.result) {
           setBgImage(event.target.result as string);
           setBgStyle('image');
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleFullImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          setBgImage(event.target.result as string);
+          setBgStyle('image');
+          setShowCard(false);
+          setShowFooter(false);
+          setShowProfile(false);
+          setShowDots(false);
+          setBgImageOverlay(0);
         }
       };
       reader.readAsDataURL(file);
@@ -389,7 +418,7 @@ export default function App() {
     fontSize, fontWeight, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
     showFooter, footerFont, footerBgStyle, footerBgColor, footerTextColor, 
     footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor,
-    bgImage, bgImageOverlay
+    bgImage, bgImageOverlay, showProfile, showDots
   };
 
   return (
@@ -408,6 +437,15 @@ export default function App() {
         type="file" 
         ref={bgFileInputRef} 
         onChange={handleBgImageUpload} 
+        className="hidden" 
+        accept="image/*"
+      />
+
+      {/* Hidden Full Image Input */}
+      <input 
+        type="file" 
+        ref={fullImageInputRef} 
+        onChange={handleFullImageUpload} 
         className="hidden" 
         accept="image/*"
       />
@@ -776,6 +814,18 @@ export default function App() {
                      <option value="mosaic">Mosaic</option>
                    </select>
                 </div>
+
+                <div className="pt-4 border-t border-[#2a2d35]">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-400">Show Profile Section</span>
+                    <div 
+                      onClick={() => setShowProfile(!showProfile)}
+                      className={cn("w-10 h-5 rounded-full relative cursor-pointer transition-colors", showProfile ? "bg-blue-500" : "bg-[#2a2d35]")}
+                    >
+                      <div className={cn("absolute top-1 w-3 h-3 bg-white rounded-full transition-all", showProfile ? "left-6" : "left-1")}></div>
+                    </div>
+                  </div>
+                </div>
               </motion.div>
             )}
 
@@ -1066,6 +1116,18 @@ export default function App() {
                       <input type="range" min="0" max="100" value={cardTransparency} onChange={(e) => setCardTransparency(parseInt(e.target.value))} className="w-full" />
                     </div>
                   </div>
+
+                  <div className="pt-4 border-t border-[#2a2d35]">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-400">Show Design Dots</span>
+                      <div 
+                        onClick={() => setShowDots(!showDots)}
+                        className={cn("w-10 h-5 rounded-full relative cursor-pointer transition-colors", showDots ? "bg-blue-500" : "bg-[#2a2d35]")}
+                      >
+                        <div className={cn("absolute top-1 w-3 h-3 bg-white rounded-full transition-all", showDots ? "left-6" : "left-1")}></div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </motion.div>
             )}
@@ -1184,14 +1246,17 @@ export default function App() {
         {/* Bottom Actions */}
         <div className="p-4 bg-[#14161b] border-t border-[#2a2d35] flex flex-col gap-2">
            <div className="flex gap-2">
-             <button className="flex-1 flex items-center justify-center gap-2 bg-[#2a2d35] hover:bg-[#353941] text-xs font-bold py-3 rounded transition-colors uppercase">
-              <Save size={16} /> Save Template
+            <button 
+              onClick={() => fullImageInputRef.current?.click()}
+              className="flex-1 flex items-center justify-center gap-2 bg-[#3b82f6] hover:bg-[#2563eb] text-white text-xs font-bold py-3 rounded transition-all shadow-lg shadow-blue-500/20 active:scale-95 uppercase"
+            >
+              <Upload size={16} /> Upload Image
             </button>
             <button 
               onClick={() => setIsExportModalOpen(true)}
-              className="flex-1 flex items-center justify-center gap-2 bg-white hover:bg-gray-200 text-black text-xs font-bold py-3 rounded transition-colors uppercase"
+              className="flex-1 flex items-center justify-center gap-2 bg-white hover:bg-gray-200 text-black text-xs font-bold py-3 rounded transition-colors uppercase shadow-lg shadow-white/5"
             >
-              <Download size={16} /> Download
+              <Download size={16} /> Export
             </button>
           </div>
         </div>
@@ -1256,7 +1321,7 @@ function Poster({
   fontWeight, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
   showFooter, footerFont, footerBgStyle, footerBgColor, footerTextColor, 
   footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor,
-  bgImage, bgImageOverlay
+  bgImage, bgImageOverlay, showProfile, showDots
 }: any) {
   return (
     <div 
@@ -1290,99 +1355,103 @@ function Poster({
         </>
       )}
       {/* Design Elements */}
-      <div className="absolute inset-0 opacity-5 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 4px 4px, white 2px, transparent 0)', backgroundSize: '64px 64px' }}></div>
+      {showDots && <div className="absolute inset-0 opacity-5 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 4px 4px, white 2px, transparent 0)', backgroundSize: '64px 64px' }}></div>}
 
       {/* Top Spacing */}
-      <div className="h-40 w-full" />
+      {showProfile && <div className="h-40 w-full" />}
 
       {/* Profile Section */}
-      <div className="w-full flex items-center gap-10 mb-12 z-10 px-16 self-start">
-        <div 
-          className={cn("w-40 h-40 rounded-full overflow-hidden flex-shrink-0 relative shadow-2xl bg-gray-200")}
-          style={{ border: avatarBorder ? `8px solid ${avatarBorderColor}` : 'none' }}
-        >
-          <img 
-            src={profileImage} 
-            alt="Profile" 
-            className={cn(
-              "w-full h-full object-cover",
-              scribbleStyle === 'blur' && "blur-[6px] scale-110",
-              scribbleStyle === 'mosaic' && "contrast-150 brightness-110 blur-[2px] opacity-70"
-            )} 
-            referrerPolicy="no-referrer" 
-            crossOrigin="anonymous" 
-          />
-          {scribbleStyle === 'solid' && (
-            <div className="absolute inset-0 bg-white/40 backdrop-blur-sm flex items-center justify-center">
-                <div className="w-full h-[30%] bg-blue-500/80 rotate-[-15deg]"></div>
-            </div>
-          )}
-          {scribbleStyle === 'squiggle' && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/10">
-                <svg className="w-full h-full text-blue-500 opacity-80" viewBox="0 0 100 100">
-                    <path d="M 0 50 Q 25 30 50 50 T 100 50" fill="none" stroke="currentColor" strokeWidth="15" />
-                    <path d="M 0 30 Q 25 10 50 30 T 100 30" fill="none" stroke="currentColor" strokeWidth="15" />
-                    <path d="M 0 70 Q 25 50 50 70 T 100 70" fill="none" stroke="currentColor" strokeWidth="15" />
-                </svg>
+      {showProfile && (
+        <div className="w-full flex items-center gap-10 mb-12 z-10 px-16 self-start">
+          <div 
+            className={cn("w-40 h-40 rounded-full overflow-hidden flex-shrink-0 relative shadow-2xl bg-gray-200")}
+            style={{ border: avatarBorder ? `8px solid ${avatarBorderColor}` : 'none' }}
+          >
+            <img 
+              src={profileImage} 
+              alt="Profile" 
+              className={cn(
+                "w-full h-full object-cover",
+                scribbleStyle === 'blur' && "blur-[6px] scale-110",
+                scribbleStyle === 'mosaic' && "contrast-150 brightness-110 blur-[2px] opacity-70"
+              )} 
+              referrerPolicy="no-referrer" 
+              crossOrigin="anonymous" 
+            />
+            {scribbleStyle === 'solid' && (
+              <div className="absolute inset-0 bg-white/40 backdrop-blur-sm flex items-center justify-center">
+                  <div className="w-full h-[30%] bg-blue-500/80 rotate-[-15deg]"></div>
               </div>
-          )}
-        </div>
-        <div className="flex flex-col justify-center">
-          <div 
-            className={cn("inline-block rounded px-1 text-ellipsis overflow-hidden whitespace-nowrap max-w-[800px]", nameFont, nameHasBg ? "bg-white/20 backdrop-blur-sm" : "")}
-            style={{ 
-              fontSize: `${nameSize}px`, 
-              color: nameColor,
-              fontWeight: '800',
-              lineHeight: 1,
-              letterSpacing: '-1px'
-            }}
-          >
-            {posterName}
+            )}
+            {scribbleStyle === 'squiggle' && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/10">
+                  <svg className="w-full h-full text-blue-500 opacity-80" viewBox="0 0 100 100">
+                      <path d="M 0 50 Q 25 30 50 50 T 100 50" fill="none" stroke="currentColor" strokeWidth="15" />
+                      <path d="M 0 30 Q 25 10 50 30 T 100 30" fill="none" stroke="currentColor" strokeWidth="15" />
+                      <path d="M 0 70 Q 25 50 50 70 T 100 70" fill="none" stroke="currentColor" strokeWidth="15" />
+                  </svg>
+                </div>
+            )}
           </div>
-          <div 
-            className={cn("block mt-2 rounded px-1", subFont, subtitleHasBg ? "bg-white/20 backdrop-blur-sm" : "")}
-            style={{ 
-              fontSize: `${subtitleSize}px`, 
-              color: subtitleColor,
-              opacity: 0.9,
-              lineHeight: 1,
-              fontWeight: '500'
-            }}
-          >
-            {subtitle}
+          <div className="flex flex-col justify-center">
+            <div 
+              className={cn("inline-block rounded px-1 text-ellipsis overflow-hidden whitespace-nowrap max-w-[800px]", nameFont, nameHasBg ? "bg-white/20 backdrop-blur-sm" : "")}
+              style={{ 
+                fontSize: `${nameSize}px`, 
+                color: nameColor,
+                fontWeight: '800',
+                lineHeight: 1,
+                letterSpacing: '-1px'
+              }}
+            >
+              {posterName}
+            </div>
+            <div 
+              className={cn("block mt-2 rounded px-1", subFont, subtitleHasBg ? "bg-white/20 backdrop-blur-sm" : "")}
+              style={{ 
+                fontSize: `${subtitleSize}px`, 
+                color: subtitleColor,
+                opacity: 0.9,
+                lineHeight: 1,
+                fontWeight: '500'
+              }}
+            >
+              {subtitle}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Card Body */}
-      <div className="w-full relative z-10 flex flex-col justify-center px-16 mb-24">
-        <div 
-          className="w-full"
-          style={{
-            backgroundColor: showCard ? `${cardColor}${Math.round(cardTransparency * 2.55).toString(16).padStart(2, '0')}` : 'transparent',
-            borderRadius: `${cardRadius}px`,
-            padding: `${cardPadding}px`,
-            boxShadow: showCard ? '0 30px 80px -15px rgba(0,0,0,0.15)' : 'none',
-          }}
-        >
+      {showCard && (
+        <div className="w-full relative z-10 flex flex-col justify-center px-16 mb-24">
           <div 
-            className={cn(fontFamily)}
-            style={{ 
-              fontSize: `${fontSize}px`,
-              color: textColor,
-              textAlign: textAlign,
-              lineHeight: lineHeight,
-              letterSpacing: `${letterSpacing}px`,
-              fontWeight: fontWeight,
-              fontStyle: fontStyle === 'italic' ? 'italic' : 'normal',
-              whiteSpace: 'pre-wrap',
+            className="w-full"
+            style={{
+              backgroundColor: `${cardColor}${Math.round(cardTransparency * 2.55).toString(16).padStart(2, '0')}`,
+              borderRadius: `${cardRadius}px`,
+              padding: `${cardPadding}px`,
+              boxShadow: '0 30px 80px -15px rgba(0,0,0,0.15)',
             }}
           >
-            {renderStoryText(storyText)}
+            <div 
+              className={cn(fontFamily)}
+              style={{ 
+                fontSize: `${fontSize}px`,
+                color: textColor,
+                textAlign: textAlign,
+                lineHeight: lineHeight,
+                letterSpacing: `${letterSpacing}px`,
+                fontWeight: fontWeight,
+                fontStyle: fontStyle === 'italic' ? 'italic' : 'normal',
+                whiteSpace: 'pre-wrap',
+              }}
+            >
+              {renderStoryText(storyText)}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Footer */}
       {showFooter && (
