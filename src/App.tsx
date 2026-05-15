@@ -292,15 +292,18 @@ export default function App() {
         .then((canvas) => {
           const stream = canvas.captureStream(30); // 30 FPS
           
-          let mimeType = 'video/webm;codecs=vp9';
+          let mimeType = 'video/mp4';
           if (!MediaRecorder.isTypeSupported(mimeType)) {
-            mimeType = 'video/webm';
-            if (!MediaRecorder.isTypeSupported(mimeType)) {
-              mimeType = 'video/mp4'; // fallback
-            }
+             mimeType = 'video/webm;codecs=vp9';
+             if (!MediaRecorder.isTypeSupported(mimeType)) {
+               mimeType = 'video/webm';
+             }
           }
 
-          const mediaRecorder = new MediaRecorder(stream, { mimeType });
+          const mediaRecorder = new MediaRecorder(stream, { 
+            mimeType,
+            videoBitsPerSecond: 5000000 // 5Mbps for better quality
+          });
           const chunks: Blob[] = [];
           
           mediaRecorder.ondataavailable = (e) => {
