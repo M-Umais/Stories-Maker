@@ -108,6 +108,7 @@ export default function App() {
   const [showCard, setShowCard] = useState(true);
   const [showProfile, setShowProfile] = useState(true);
   const [showDots, setShowDots] = useState(true);
+  const [fullImageOnly, setFullImageOnly] = useState<string | null>(null);
 
   // Footer State
   const [showFooter, setShowFooter] = useState(true);
@@ -161,6 +162,7 @@ export default function App() {
     setShowFooter(true);
     setShowProfile(true);
     setShowDots(true);
+    setFullImageOnly(null);
   };
 
   const handleNewPoster = () => {
@@ -174,6 +176,7 @@ export default function App() {
     setShowFooter(true);
     setShowProfile(true);
     setShowDots(true);
+    setFullImageOnly(null);
   };
 
   const applyPreset = (presetId: string) => {
@@ -232,13 +235,7 @@ export default function App() {
       const reader = new FileReader();
       reader.onload = (event) => {
         if (event.target?.result) {
-          setBgImage(event.target.result as string);
-          setBgStyle('image');
-          setShowCard(false);
-          setShowFooter(false);
-          setShowProfile(false);
-          setShowDots(false);
-          setBgImageOverlay(0);
+          setFullImageOnly(event.target.result as string);
         }
       };
       reader.readAsDataURL(file);
@@ -418,7 +415,7 @@ export default function App() {
     fontSize, fontWeight, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
     showFooter, footerFont, footerBgStyle, footerBgColor, footerTextColor, 
     footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor,
-    bgImage, bgImageOverlay, showProfile, showDots
+    bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly
   };
 
   return (
@@ -1002,12 +999,25 @@ export default function App() {
               >
                 <div>
                   <label className="text-xs text-gray-400 block mb-2">Background Image</label>
-                  <button 
-                    onClick={() => bgFileInputRef.current?.click()}
-                    className="w-full flex items-center justify-center gap-2 bg-[#3b82f6] hover:bg-[#2563eb] text-white font-bold py-3 rounded-xl transition-all shadow-lg active:scale-[0.98]"
-                  >
-                    <Upload size={16} /> {bgImage ? 'CHANGE BACKGROUND' : 'UPLOAD BACKGROUND'}
-                  </button>
+                  <div className="flex flex-col gap-2">
+                    <button 
+                      onClick={() => bgFileInputRef.current?.click()}
+                      className="w-full flex items-center justify-center gap-2 bg-[#3b82f6] hover:bg-[#2563eb] text-white font-bold py-3 rounded-xl transition-all shadow-lg active:scale-[0.98]"
+                    >
+                      <Upload size={16} /> {bgImage ? 'CHANGE BACKGROUND' : 'UPLOAD BACKGROUND'}
+                    </button>
+                    {bgImage && (
+                      <button 
+                        onClick={() => {
+                          setBgImage(null);
+                          setBgStyle('solid');
+                        }}
+                        className="w-full flex items-center justify-center gap-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 text-[10px] font-bold py-2 rounded-lg transition-all border border-red-500/20 uppercase"
+                      >
+                        <X size={14} /> Remove Background
+                      </button>
+                    )}
+                  </div>
                   {bgImage && (
                     <p className="text-[10px] text-blue-400 mt-2 text-center font-bold animate-pulse">IMAGE UPLOADED & ACTIVE</p>
                   )}
@@ -1321,7 +1331,7 @@ function Poster({
   fontWeight, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
   showFooter, footerFont, footerBgStyle, footerBgColor, footerTextColor, 
   footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor,
-  bgImage, bgImageOverlay, showProfile, showDots
+  bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly
 }: any) {
   return (
     <div 
@@ -1330,9 +1340,10 @@ function Poster({
       style={{ 
         width: '1080px', 
         height: '1920px',
-        background: bgStyle === 'solid' ? bgColor : 
+        background: fullImageOnly ? 'transparent' : (
+                    bgStyle === 'solid' ? bgColor : 
                     bgStyle === 'gradient' ? `linear-gradient(to bottom, ${bgColor}, ${gradEnd})` : 
-                    '#000',
+                    '#000'),
         transform: 'scale(0.33)',
         transformOrigin: 'top left',
         position: 'absolute',
@@ -1340,147 +1351,156 @@ function Poster({
         left: 0
       }}
     >
-      {bgStyle === 'image' && bgImage && (
+      {fullImageOnly ? (
+        <img 
+          src={fullImageOnly} 
+          alt="Full Preview" 
+          className="absolute inset-0 w-full h-full object-contain bg-black"
+          style={{ zIndex: 50 }}
+        />
+      ) : (
         <>
-          <img 
-            src={bgImage} 
-            alt="Background" 
-            className="absolute inset-0 w-full h-full object-cover"
-            style={{ zIndex: 0 }}
-          />
-          <div 
-            className="absolute inset-0 z-0" 
-            style={{ backgroundColor: `rgba(0,0,0,${bgImageOverlay / 100})` }}
-          />
-        </>
-      )}
-      {/* Design Elements */}
-      {showDots && <div className="absolute inset-0 opacity-5 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 4px 4px, white 2px, transparent 0)', backgroundSize: '64px 64px' }}></div>}
+          {bgStyle === 'image' && bgImage && (
+            <>
+              <img 
+                src={bgImage} 
+                alt="Background" 
+                className="absolute inset-0 w-full h-full object-cover"
+                style={{ zIndex: 0 }}
+              />
+              <div 
+                className="absolute inset-0 z-0" 
+                style={{ backgroundColor: `rgba(0,0,0,${bgImageOverlay / 100})` }}
+              />
+            </>
+          )}
+          {/* Design Elements */}
+          {showDots && <div className="absolute inset-0 opacity-5 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 4px 4px, white 2px, transparent 0)', backgroundSize: '64px 64px' }}></div>}
 
-      {/* Top Spacing */}
-      {showProfile && <div className="h-40 w-full" />}
+          {/* Top Spacing */}
+          {showProfile && <div className="h-40 w-full" />}
 
-      {/* Profile Section */}
-      {showProfile && (
-        <div className="w-full flex items-center gap-10 mb-12 z-10 px-16 self-start">
-          <div 
-            className={cn("w-40 h-40 rounded-full overflow-hidden flex-shrink-0 relative shadow-2xl bg-gray-200")}
-            style={{ border: avatarBorder ? `8px solid ${avatarBorderColor}` : 'none' }}
-          >
-            <img 
-              src={profileImage} 
-              alt="Profile" 
-              className={cn(
-                "w-full h-full object-cover",
-                scribbleStyle === 'blur' && "blur-[6px] scale-110",
-                scribbleStyle === 'mosaic' && "contrast-150 brightness-110 blur-[2px] opacity-70"
-              )} 
-              referrerPolicy="no-referrer" 
-              crossOrigin="anonymous" 
-            />
-            {scribbleStyle === 'solid' && (
-              <div className="absolute inset-0 bg-white/40 backdrop-blur-sm flex items-center justify-center">
-                  <div className="w-full h-[30%] bg-blue-500/80 rotate-[-15deg]"></div>
+          {/* Profile Section */}
+          {showProfile && (
+            <div className="w-full flex items-center gap-10 mb-12 z-10 px-16 self-start">
+              <div 
+                className={cn("w-40 h-40 rounded-full overflow-hidden flex-shrink-0 relative shadow-2xl bg-gray-200")}
+                style={{ border: avatarBorder ? `8px solid ${avatarBorderColor}` : 'none' }}
+              >
+                <img 
+                  src={profileImage} 
+                  alt="Profile" 
+                  className={cn(
+                    "w-full h-full object-cover",
+                    scribbleStyle === 'blur' && "blur-[6px] scale-110",
+                    scribbleStyle === 'mosaic' && "contrast-150 brightness-110 blur-[2px] opacity-70"
+                  )} 
+                  referrerPolicy="no-referrer" 
+                  crossOrigin="anonymous" 
+                />
+                {scribbleStyle === 'solid' && (
+                  <div className="absolute inset-0 bg-white/40 backdrop-blur-sm flex items-center justify-center">
+                      <div className="w-full h-[30%] bg-blue-500/80 rotate-[-15deg]"></div>
+                  </div>
+                )}
+                {scribbleStyle === 'squiggle' && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/10">
+                      <svg className="w-full h-full text-blue-500 opacity-80" viewBox="0 0 100 100">
+                          <path d="M 0 50 Q 25 30 50 50 T 100 50" fill="none" stroke="currentColor" strokeWidth="15" />
+                          <path d="M 0 30 Q 25 10 50 30 T 100 30" fill="none" stroke="currentColor" strokeWidth="15" />
+                          <path d="M 0 70 Q 25 50 50 70 T 100 70" fill="none" stroke="currentColor" strokeWidth="15" />
+                      </svg>
+                    </div>
+                )}
               </div>
-            )}
-            {scribbleStyle === 'squiggle' && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/10">
-                  <svg className="w-full h-full text-blue-500 opacity-80" viewBox="0 0 100 100">
-                      <path d="M 0 50 Q 25 30 50 50 T 100 50" fill="none" stroke="currentColor" strokeWidth="15" />
-                      <path d="M 0 30 Q 25 10 50 30 T 100 30" fill="none" stroke="currentColor" strokeWidth="15" />
-                      <path d="M 0 70 Q 25 50 50 70 T 100 70" fill="none" stroke="currentColor" strokeWidth="15" />
-                  </svg>
+              <div className="flex flex-col justify-center">
+                <div 
+                  className={cn("inline-block rounded px-1 text-ellipsis overflow-hidden whitespace-nowrap max-w-[800px]", nameFont, nameHasBg ? "bg-white/20 backdrop-blur-sm" : "")}
+                  style={{ 
+                    fontSize: `${nameSize}px`, 
+                    color: nameColor,
+                    fontWeight: '800',
+                    lineHeight: 1,
+                    letterSpacing: '-1px'
+                  }}
+                >
+                  {posterName}
                 </div>
-            )}
-          </div>
-          <div className="flex flex-col justify-center">
-            <div 
-              className={cn("inline-block rounded px-1 text-ellipsis overflow-hidden whitespace-nowrap max-w-[800px]", nameFont, nameHasBg ? "bg-white/20 backdrop-blur-sm" : "")}
-              style={{ 
-                fontSize: `${nameSize}px`, 
-                color: nameColor,
-                fontWeight: '800',
-                lineHeight: 1,
-                letterSpacing: '-1px'
-              }}
-            >
-              {posterName}
+                <div 
+                  className={cn("block mt-2 rounded px-1", subFont, subtitleHasBg ? "bg-white/20 backdrop-blur-sm" : "")}
+                  style={{ 
+                    fontSize: `${subtitleSize}px`, 
+                    color: subtitleColor,
+                    opacity: 0.9,
+                    lineHeight: 1,
+                    fontWeight: '500'
+                  }}
+                >
+                  {subtitle}
+                </div>
+              </div>
             </div>
-            <div 
-              className={cn("block mt-2 rounded px-1", subFont, subtitleHasBg ? "bg-white/20 backdrop-blur-sm" : "")}
-              style={{ 
-                fontSize: `${subtitleSize}px`, 
-                color: subtitleColor,
-                opacity: 0.9,
-                lineHeight: 1,
-                fontWeight: '500'
-              }}
-            >
-              {subtitle}
-            </div>
-          </div>
-        </div>
-      )}
+          )}
 
-      {/* Card Body */}
-      {showCard && (
-        <div className="w-full relative z-10 flex flex-col justify-center px-16 mb-24">
-          <div 
-            className="w-full"
-            style={{
-              backgroundColor: `${cardColor}${Math.round(cardTransparency * 2.55).toString(16).padStart(2, '0')}`,
-              borderRadius: `${cardRadius}px`,
-              padding: `${cardPadding}px`,
-              boxShadow: '0 30px 80px -15px rgba(0,0,0,0.15)',
-            }}
-          >
+          {/* Card Body */}
+          <div className="w-full relative z-10 flex flex-col justify-center px-16 mb-24">
             <div 
-              className={cn(fontFamily)}
-              style={{ 
-                fontSize: `${fontSize}px`,
-                color: textColor,
-                textAlign: textAlign,
-                lineHeight: lineHeight,
-                letterSpacing: `${letterSpacing}px`,
-                fontWeight: fontWeight,
-                fontStyle: fontStyle === 'italic' ? 'italic' : 'normal',
-                whiteSpace: 'pre-wrap',
+              className="w-full transition-all duration-300"
+              style={{
+                backgroundColor: showCard ? `${cardColor}${Math.round(cardTransparency * 2.55).toString(16).padStart(2, '0')}` : 'transparent',
+                borderRadius: `${cardRadius}px`,
+                padding: `${cardPadding}px`,
+                boxShadow: showCard ? '0 30px 80px -15px rgba(0,0,0,0.15)' : 'none',
               }}
             >
-              {renderStoryText(storyText)}
+              <div 
+                className={cn(fontFamily)}
+                style={{ 
+                  fontSize: `${fontSize}px`,
+                  color: textColor,
+                  textAlign: textAlign,
+                  lineHeight: lineHeight,
+                  letterSpacing: `${letterSpacing}px`,
+                  fontWeight: fontWeight,
+                  fontStyle: fontStyle === 'italic' ? 'italic' : 'normal',
+                  whiteSpace: 'pre-wrap',
+                }}
+              >
+                {renderStoryText(storyText)}
+              </div>
             </div>
           </div>
-        </div>
-      )}
 
-      {/* Footer */}
-      {showFooter && (
-        <div className="w-full mt-auto mb-20 flex justify-center z-10">
-          <div 
-            className={cn(
-              "py-6 px-12 rounded-lg text-center transition-all flex items-center justify-center gap-6", 
-              footerFont,
-              footerBgStyle === 'card' && "w-[calc(100%-128px)]",
-              footerBgStyle === 'fill' && "absolute bottom-0 left-0 right-0 py-12"
-            )}
-            style={{ 
-              backgroundColor: footerBgStyle === 'none' ? 'transparent' : 
-                               footerBgStyle === 'card' ? cardColor : 
-                               footerBgColor,
-              color: footerTextColor,
-              fontSize: `${footerFontSize}px`,
-              fontWeight: '800',
-              letterSpacing: '2px',
-              borderRadius: footerBgStyle === 'text' ? '12px' : '0',
-              border: footerBorderWidth > 0 ? `${footerBorderWidth}px solid ${footerBorderColor}` : 'none',
-              textTransform: 'uppercase',
-              boxShadow: footerBgStyle === 'none' ? 'none' : '0 10px 30px -5px rgba(0,0,0,0.1)'
-            }}
-          >
-            {footerText}
-            <MoveRight size={footerFontSize * 1.2} strokeWidth={3} />
-          </div>
-        </div>
+          {/* Footer */}
+          {showFooter && (
+            <div className="w-full mt-auto mb-20 flex justify-center z-10">
+              <div 
+                className={cn(
+                  "py-6 px-12 rounded-lg text-center transition-all flex items-center justify-center gap-6", 
+                  footerFont,
+                  footerBgStyle === 'card' && "w-[calc(100%-128px)]",
+                  footerBgStyle === 'fill' && "absolute bottom-0 left-0 right-0 py-12"
+                )}
+                style={{ 
+                  backgroundColor: footerBgStyle === 'none' ? 'transparent' : 
+                                  footerBgStyle === 'card' ? cardColor : 
+                                  footerBgColor,
+                  color: footerTextColor,
+                  fontSize: `${footerFontSize}px`,
+                  fontWeight: '800',
+                  letterSpacing: '2px',
+                  borderRadius: footerBgStyle === 'text' ? '12px' : '0',
+                  border: footerBorderWidth > 0 ? `${footerBorderWidth}px solid ${footerBorderColor}` : 'none',
+                  textTransform: 'uppercase',
+                  boxShadow: footerBgStyle === 'none' ? 'none' : '0 10px 30px -5px rgba(0,0,0,0.1)'
+                }}
+              >
+                {footerText}
+                <MoveRight size={footerFontSize * 1.2} strokeWidth={3} />
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
