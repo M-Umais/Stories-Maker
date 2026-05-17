@@ -117,6 +117,7 @@ export default function App() {
   const [showProfile, setShowProfile] = useState(true);
   const [showDots, setShowDots] = useState(true);
   const [fullImageOnly, setFullImageOnly] = useState<string | null>(null);
+  const [removePaddingWhenHidden, setRemovePaddingWhenHidden] = useState(false);
 
   // Footer State
   const [showFooter, setShowFooter] = useState(true);
@@ -176,6 +177,7 @@ export default function App() {
     setShowProfile(true);
     setShowDots(true);
     setFullImageOnly(null);
+    setRemovePaddingWhenHidden(false);
   };
 
   const handleNewPoster = () => {
@@ -190,6 +192,7 @@ export default function App() {
     setShowProfile(true);
     setShowDots(true);
     setFullImageOnly(null);
+    setRemovePaddingWhenHidden(false);
   };
 
   const applyPreset = (presetId: string) => {
@@ -528,7 +531,7 @@ export default function App() {
     fontWeight, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
     showFooter, footerFont, footerBgStyle, footerBgColor, footerTextColor, 
     footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor,
-    bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly
+    bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly, removePaddingWhenHidden
   };
 
   return (
@@ -1334,7 +1337,20 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="pt-4 border-t border-[#2a2d35]">
+                  <div className="pt-4 border-t border-[#2a2d35] space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex flex-col">
+                        <span className="text-xs text-gray-400">Remove Padding When Hidden</span>
+                        <span className="text-[10px] text-gray-500">Remove gaps when card is disabled</span>
+                      </div>
+                      <div 
+                        onClick={() => setRemovePaddingWhenHidden(!removePaddingWhenHidden)}
+                        className={cn("w-10 h-5 rounded-full relative cursor-pointer transition-colors", removePaddingWhenHidden ? "bg-blue-500" : "bg-[#2a2d35]")}
+                      >
+                        <div className={cn("absolute top-1 w-3 h-3 bg-white rounded-full transition-all", removePaddingWhenHidden ? "left-6" : "left-1")}></div>
+                      </div>
+                    </div>
+                    
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-gray-400">Show Design Dots</span>
                       <div 
@@ -1555,8 +1571,10 @@ function Poster({
   fontWeight, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
   showFooter, footerFont, footerBgStyle, footerBgColor, footerTextColor, 
   footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor,
-  bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly, hColor
+  bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly, hColor, removePaddingWhenHidden
 }: any) {
+  const isCardPadded = showCard || !removePaddingWhenHidden;
+
   return (
     <div 
       ref={innerRef}
@@ -1696,8 +1714,8 @@ function Poster({
               className="w-full transition-all duration-300"
               style={{
                 backgroundColor: showCard ? `${cardColor}${Math.round(cardTransparency * 2.55).toString(16).padStart(2, '0')}` : 'transparent',
-                borderRadius: `${cardRadius}px`,
-                padding: `${cardPadding}px`,
+                borderRadius: showCard ? `${cardRadius}px` : '0px',
+                padding: isCardPadded ? `${cardPadding}px` : '0px',
                 boxShadow: showCard ? '0 30px 80px -15px rgba(0,0,0,0.15)' : 'none',
               }}
             >
