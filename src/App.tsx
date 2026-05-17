@@ -21,7 +21,9 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { toPng, toCanvas } from 'html-to-image';
 import { cn } from './lib/utils';
+import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import { TEMPLATE_PRESETS, TemplatePreset } from './constants';
+
 import JSZip from 'jszip';
 
 type TabType = 'profile' | 'typography' | 'background' | 'footer';
@@ -63,6 +65,204 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [bulkExportInfo, setBulkExportInfo] = useState('');
+
+  const getSupportedMimeType = useCallback(() => {
+    const types = [
+      'video/mp4;codecs=avc1,mp4a.40.2',
+      'video/mp4;codecs=h264,aac',
+      'video/mp4;codecs=h264',
+      'video/mp4',
+      'video/webm;codecs=h264',
+      'video/webm;codecs=vp9',
+      'video/webm'
+    ];
+    for (const type of types) {
+      if (MediaRecorder.isTypeSupported(type)) return type;
+    }
+    return 'video/webm';
+  }, []);
+
+  const recordCanvasToMp4 = async (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void) => {
+    // Check for WebCodecs support
+    if (!('VideoEncoder' in window) || !('VideoFrame' in window)) {
+      throw new Error('WebCodecs API not supported');
+    }
+
+    // H.264 encoders often require even dimensions
+    let width = canvas.width;
+    let height = canvas.height;
+    if (width % 2 !== 0) width--;
+    if (height % 2 !== 0) height--;
+
+    const fps = 30;
+    const totalFrames = duration * fps;
+
+    const muxer = new Muxer({
+      target: new ArrayBufferTarget(),
+      video: {
+        codec: 'avc',
+        width,
+        height
+      },
+      fastStart: 'in-memory'
+    });
+
+    let encoderError: Error | null = null;
+    const encoder = new VideoEncoder({
+      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+      error: (e) => {
+        console.error('VideoEncoder error:', e);
+        encoderError = e;
+      }
+    });
+
+    // Try multiple H.264 profiles for compatibility
+    const codecProfiles = [
+      'avc1.42E01E', // Baseline Level 3.0
+      'avc1.4D401E', // Main Level 3.0
+      'avc1.4d002e', // Main Level 4.6
+      'avc1.640028'  // High Level 4.0
+    ];
+
+    let config: VideoEncoderConfig | null = null;
+
+    for (const codec of codecProfiles) {
+      const testConfig: VideoEncoderConfig = {
+        codec,
+        width,
+        height,
+        bitrate: 6_000_000,
+        avc: { format: 'avc' } // 'avc' (AVCC) is standard for MP4
+      };
+      
+      try {
+        const support = await VideoEncoder.isConfigSupported(testConfig);
+        if (support.supported) {
+          config = testConfig;
+          break;
+        }
+      } catch (e) {
+        console.warn(`Codec ${codec} support check failed:`, e);
+      }
+    }
+
+    if (!config) {
+      // Fallback to a very basic string if needed, or error out
+      config = {
+        codec: 'avc1.42E01E',
+        width,
+        height,
+        bitrate: 6_000_000,
+        avc: { format: 'avc' }
+      };
+    }
+
+    try {
+      encoder.configure(config);
+    } catch (e) {
+      console.error('Failed to configure encoder with primary config, trying fallback:', e);
+      config.codec = 'avc1.42E01E'; // Try baseline if main failed
+      encoder.configure(config);
+    }
+
+    for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
+      if (encoderError) throw encoderError;
+      if (encoder.state === 'closed') throw new Error('Encoder closed unexpectedly');
+
+      const timestamp = (frameIndex * 1000000) / fps;
+      
+      // We create a new VideoFrame using the canvas. 
+      // We use the visibleRect to ensure it matches the possibly adjusted width/height
+      const frame = new VideoFrame(canvas, { 
+        timestamp,
+        visibleRect: { x: 0, y: 0, width, height },
+        displayWidth: width,
+        displayHeight: height
+      });
+      
+      encoder.encode(frame, { keyFrame: frameIndex % 30 === 0 }); // Keyframe every second
+      frame.close();
+
+      if (onProgress) {
+        onProgress(Math.floor((frameIndex / totalFrames) * 100));
+      }
+
+      // We need to wait for the encoder to process. Too much pressure can cause stalls.
+      if (frameIndex % 5 === 0) {
+        await new Promise(r => setTimeout(r, 0));
+        // Also check if we need to flush to keep memory low
+        if (frameIndex % 60 === 0) {
+          await encoder.flush();
+        }
+      }
+    }
+
+    await encoder.flush();
+    encoder.close(); // Close the encoder after we are done
+    muxer.finalize();
+    
+    // Convert ArrayBuffer to Blob
+    const buffer = muxer.target.buffer;
+    if (!buffer || buffer.byteLength === 0) {
+      throw new Error('Exported video is empty');
+    }
+    return new Blob([buffer], { type: 'video/mp4' });
+  };
+
+  const recordWithFallback = async (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void) => {
+    if ('VideoEncoder' in window) {
+      try {
+        return await recordCanvasToMp4(canvas, duration, onProgress);
+      } catch (err) {
+        console.error('VideoEncoder failed, falling back to MediaRecorder:', err);
+      }
+    }
+    return await recordCanvasMediaRecorder(canvas, duration, onProgress);
+  };
+
+  const recordCanvasMediaRecorder = (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void): Promise<Blob> => {
+    return new Promise((resolve) => {
+      const stream = canvas.captureStream(30);
+      const mimeType = getSupportedMimeType();
+      const mediaRecorder = new MediaRecorder(stream, { 
+        mimeType,
+        videoBitsPerSecond: 6000000
+      });
+      const chunks: Blob[] = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        resolve(new Blob(chunks, { type: mimeType }));
+      };
+
+      mediaRecorder.start();
+      
+      const startTime = Date.now();
+      const totalMs = duration * 1000;
+      const ctx = canvas.getContext('2d');
+
+      const intervalId = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(100, Math.floor((elapsed / totalMs) * 100));
+        
+        if (onProgress) onProgress(progress);
+        
+        // Force frame update
+        if (ctx) {
+          const pixel = ctx.getImageData(0, 0, 1, 1);
+          ctx.putImageData(pixel, 0, 0);
+        }
+
+        if (elapsed >= totalMs) {
+          clearInterval(intervalId);
+          mediaRecorder.stop();
+        }
+      }, 100);
+    });
+  };
   
   // Bulk Mode State
   const [isBulkMode, setIsBulkMode] = useState(false);
@@ -291,53 +491,17 @@ export default function App() {
             width: '1080px',
             height: '1920px'
           }
-        }).then(canvas => {
-          const stream = canvas.captureStream(30);
-          let mimeType = 'video/mp4';
-          if (!MediaRecorder.isTypeSupported(mimeType)) {
-            mimeType = 'video/webm;codecs=vp9';
-            if (!MediaRecorder.isTypeSupported(mimeType)) {
-              mimeType = 'video/webm';
-            }
+        }).then(async (canvas) => {
+          try {
+            const videoBlob = await recordWithFallback(canvas, exportDuration, (cardProgress) => {
+              const overallProgress = Math.floor(((i + (cardProgress / 100)) / total) * 100);
+              setExportProgress(overallProgress);
+            });
+            resolve(videoBlob);
+          } catch (err) {
+            console.error('Bulk export error:', err);
+            reject(err);
           }
-
-          const mediaRecorder = new MediaRecorder(stream, { 
-            mimeType,
-            videoBitsPerSecond: 5000000 
-          });
-          const chunks: Blob[] = [];
-          
-          mediaRecorder.ondataavailable = (e) => {
-            if (e.data.size > 0) chunks.push(e.data);
-          };
-          
-          mediaRecorder.onstop = () => {
-            resolve(new Blob(chunks, { type: mimeType }));
-          };
-          
-          mediaRecorder.start();
-          
-          const ctx = canvas.getContext('2d');
-          const startTime = Date.now();
-          const totalMs = exportDuration * 1000;
-          
-          const intervalId = setInterval(() => {
-            const elapsed = Date.now() - startTime;
-            const cardProgress = Math.min(100, Math.floor((elapsed / totalMs) * 100));
-            
-            const overallProgress = Math.floor(((i + (cardProgress / 100)) / total) * 100);
-            setExportProgress(overallProgress);
-            
-            if (ctx) {
-              const pixel = ctx.getImageData(0, 0, 1, 1);
-              ctx.putImageData(pixel, 0, 0);
-            }
-            
-            if (elapsed >= totalMs) {
-              clearInterval(intervalId);
-              mediaRecorder.stop();
-            }
-          }, 100);
         }).catch(reject);
       });
 
@@ -393,11 +557,11 @@ export default function App() {
         });
       }, 500);
     } else {
-      // Video Export (Recording capture)
+      // Video Export (H.264 MP4 with proper metadata)
       setExportProgress(0);
       
       toCanvas(node, { 
-        pixelRatio: 1, // Using 1x for video stability/performance
+        pixelRatio: 1,
         cacheBust: true,
         style: {
           transform: 'scale(1)',
@@ -406,32 +570,15 @@ export default function App() {
           height: '1920px'
         }
       })
-        .then((canvas) => {
-          const stream = canvas.captureStream(30); // 30 FPS
-          
-          let mimeType = 'video/mp4';
-          if (!MediaRecorder.isTypeSupported(mimeType)) {
-             mimeType = 'video/webm;codecs=vp9';
-             if (!MediaRecorder.isTypeSupported(mimeType)) {
-               mimeType = 'video/webm';
-             }
-          }
-
-          const mediaRecorder = new MediaRecorder(stream, { 
-            mimeType,
-            videoBitsPerSecond: 5000000 // 5Mbps for better quality
-          });
-          const chunks: Blob[] = [];
-          
-          mediaRecorder.ondataavailable = (e) => {
-            if (e.data.size > 0) chunks.push(e.data);
-          };
-          
-          mediaRecorder.onstop = () => {
-            const blob = new Blob(chunks, { type: mimeType });
+        .then(async (canvas) => {
+          try {
+            const blob = await recordWithFallback(canvas, exportDuration, (p) => {
+              setExportProgress(p);
+            });
+            
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
-            const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
+            const extension = blob.type.includes('mp4') ? 'mp4' : 'webm';
             link.href = url;
             link.download = `story-video-${Date.now()}.${extension}`;
             link.click();
@@ -439,31 +586,12 @@ export default function App() {
             setExportProgress(0);
             setIsExporting(false);
             setIsExportModalOpen(false);
-          };
-          
-          mediaRecorder.start();
-          
-          // Ensure frames are produced for the duration even if static
-          const ctx = canvas.getContext('2d');
-          const startTime = Date.now();
-          const totalMs = exportDuration * 1000;
-          
-          const intervalId = setInterval(() => {
-            const elapsed = Date.now() - startTime;
-            const progress = Math.min(100, Math.floor((elapsed / totalMs) * 100));
-            setExportProgress(progress);
-            
-            // Force frame update
-            if (ctx) {
-              const pixel = ctx.getImageData(0, 0, 1, 1);
-              ctx.putImageData(pixel, 0, 0);
-            }
-            
-            if (elapsed >= totalMs) {
-              clearInterval(intervalId);
-              mediaRecorder.stop();
-            }
-          }, 100);
+          } catch (err) {
+            console.error('Video export failed', err);
+            alert('Video export failed. Your browser might not support high-quality export or the canvas is too large.');
+            setIsExporting(false);
+            setExportProgress(0);
+          }
         })
         .catch((err) => {
           console.error('Video export failed', err);
