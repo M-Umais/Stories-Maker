@@ -19,9 +19,10 @@ import {
   Plus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-// import { toPng, toCanvas } from 'html-to-image';
+import { toPng, toCanvas } from 'html-to-image';
 import { cn } from './lib/utils';
 import { TEMPLATE_PRESETS, TemplatePreset } from './constants';
+import JSZip from 'jszip';
 
 type TabType = 'profile' | 'typography' | 'background' | 'footer';
 
@@ -61,10 +62,17 @@ export default function App() {
   const [exportDuration, setExportDuration] = useState(31);
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
+  const [bulkExportInfo, setBulkExportInfo] = useState('');
   
   // Bulk Mode State
   const [isBulkMode, setIsBulkMode] = useState(false);
-  const [bulkInput, setBulkInput] = useState('');
+  const [bulkStories, setBulkStories] = useState<any[]>(
+    Array(10).fill(null).map((_, i) => ({
+      text: i === 0 ? 'Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [Again?] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...' : '',
+      fontSize: 62,
+      highlightColor: '#150621'
+    }))
+  );
   
   // Profile State
   const [profileImage, setProfileImage] = useState('https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=400&h=400');
@@ -133,6 +141,11 @@ export default function App() {
     setPosterName('Buried Bell');
     setSubtitle('Will It Ring Again?');
     setStoryText('Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [Again?] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...');
+    setBulkStories(Array(10).fill(null).map((_, i) => ({
+      text: i === 0 ? 'Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [Again?] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...' : '',
+      fontSize: 62,
+      highlightColor: '#150621'
+    })));
     setFooterText("CONTINUE READING IN COMMENT");
     setNameSize(82);
     setSubtitleSize(44);
@@ -200,6 +213,12 @@ export default function App() {
     setScribbleStyle('none');
     setFooterBgStyle('none');
     setFooterBgColor('#ffffff');
+
+    // Apply to bulk stories as well
+    setBulkStories(prev => prev.map(story => ({
+      ...story,
+      highlightColor: preset.typography.highlightColor
+    })));
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -242,13 +261,108 @@ export default function App() {
     }
   };
 
+  const handleBulkDownload = useCallback(async () => {
+    const cardElements = document.querySelectorAll('.bulk-poster-card');
+    if (cardElements.length === 0) return;
+
+    setIsExporting(true);
+    setExportProgress(0);
+    setBulkExportInfo(`Initializing bulk export...`);
+    
+    // Dynamically import jszip inside the handler to keep the initial bundle smaller
+    const JSZip = (await import('jszip')).default;
+    const zip = new JSZip();
+    const total = cardElements.length;
+    
+    for (let i = 0; i < total; i++) {
+      const node = cardElements[i] as HTMLElement;
+      setBulkExportInfo(`Exporting Card ${i + 1} of ${total}`);
+      
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        toCanvas(node, {
+          pixelRatio: 1,
+          cacheBust: true,
+          style: {
+            transform: 'scale(1)',
+            transformOrigin: 'top left',
+            width: '1080px',
+            height: '1920px'
+          }
+        }).then(canvas => {
+          const stream = canvas.captureStream(30);
+          let mimeType = 'video/mp4';
+          if (!MediaRecorder.isTypeSupported(mimeType)) {
+            mimeType = 'video/webm;codecs=vp9';
+            if (!MediaRecorder.isTypeSupported(mimeType)) {
+              mimeType = 'video/webm';
+            }
+          }
+
+          const mediaRecorder = new MediaRecorder(stream, { 
+            mimeType,
+            videoBitsPerSecond: 5000000 
+          });
+          const chunks: Blob[] = [];
+          
+          mediaRecorder.ondataavailable = (e) => {
+            if (e.data.size > 0) chunks.push(e.data);
+          };
+          
+          mediaRecorder.onstop = () => {
+            resolve(new Blob(chunks, { type: mimeType }));
+          };
+          
+          mediaRecorder.start();
+          
+          const ctx = canvas.getContext('2d');
+          const startTime = Date.now();
+          const totalMs = exportDuration * 1000;
+          
+          const intervalId = setInterval(() => {
+            const elapsed = Date.now() - startTime;
+            const cardProgress = Math.min(100, Math.floor((elapsed / totalMs) * 100));
+            
+            const overallProgress = Math.floor(((i + (cardProgress / 100)) / total) * 100);
+            setExportProgress(overallProgress);
+            
+            if (ctx) {
+              const pixel = ctx.getImageData(0, 0, 1, 1);
+              ctx.putImageData(pixel, 0, 0);
+            }
+            
+            if (elapsed >= totalMs) {
+              clearInterval(intervalId);
+              mediaRecorder.stop();
+            }
+          }, 100);
+        }).catch(reject);
+      });
+
+      const extension = blob.type.includes('mp4') ? 'mp4' : 'webm';
+      zip.file(`story-${i + 1}.${extension}`, blob);
+    }
+    
+    setBulkExportInfo('Generating ZIP file...');
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(zipBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `bulk-stories-${Date.now()}.zip`;
+    link.click();
+    
+    setIsExporting(false);
+    setExportProgress(0);
+    setBulkExportInfo('');
+    setIsExportModalOpen(false);
+  }, [exportDuration]);
+
   const handleDownload = useCallback(async (type: 'image' | 'video' = 'image') => {
     if (previewRef.current === null) return;
     const node = previewRef.current;
     
     setIsExporting(true);
     
-    const { toPng, toCanvas } = await import('html-to-image');
+    // const { toPng, toCanvas } = await import('html-to-image');
     
     if (type === 'image') {
       setTimeout(() => {
@@ -356,18 +470,19 @@ export default function App() {
     }
   }, [previewRef, exportDuration]);
   
-  const handleRandomHighlight = () => {
-    if (isBulkMode) {
-      const stories = bulkInput.split('\n\n').filter(s => s.trim().length > 0);
-      const highlighted = stories.map(s => getRandomHighlights(s.replace(/\[|\]/g, ''))).join('\n\n');
-      setBulkInput(highlighted);
+  const handleRandomHighlight = (index?: number) => {
+    if (isBulkMode && typeof index === 'number') {
+      const newBulk = [...bulkStories];
+      const cleanText = newBulk[index].text.replace(/\[|\]/g, '');
+      newBulk[index].text = getRandomHighlights(cleanText);
+      setBulkStories(newBulk);
     } else {
       const cleanText = storyText.replace(/\[|\]/g, '');
       setStoryText(getRandomHighlights(cleanText));
     }
   };
 
-  const renderStoryText = (text: string) => {
+  const renderStoryText = (text: string, hColor: string) => {
     const parts = text.split(/(\[.*?\])/);
     return parts.map((part, index) => {
       if (part.startsWith('[') && part.endsWith(']')) {
@@ -375,7 +490,7 @@ export default function App() {
         return (
           <span 
             key={index} 
-            style={{ color: highlightColor }} 
+            style={{ color: hColor }} 
             className={cn("font-bold decoration-2 underline-offset-4", highlightUnderline ? "underline" : "")}
           >
             {content}
@@ -405,17 +520,12 @@ export default function App() {
     { label: 'Playfair Display', value: 'font-playfair' },
   ];
 
-  // Map through stories for bulk mode, else single
-  const storiesToRender = isBulkMode 
-    ? bulkInput.split('\n\n').filter(s => s.trim().length > 0).slice(0, 10)
-    : [storyText];
-
   const posterProps = {
     bgStyle, bgColor, gradEnd, avatarBorder, avatarBorderColor, profileImage, 
     scribbleStyle, nameFont, nameHasBg, nameSize, nameColor, posterName, 
     subFont, subtitleHasBg, subtitleSize, subtitleColor, subtitle, 
     cardColor, cardTransparency, cardRadius, cardPadding, fontFamily, 
-    fontSize, fontWeight, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
+    fontWeight, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
     showFooter, footerFont, footerBgStyle, footerBgColor, footerTextColor, 
     footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor,
     bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly
@@ -492,6 +602,34 @@ export default function App() {
                       <p className="text-xs text-gray-500">Single 1080p Full HD photo</p>
                     </div>
                   </div>
+
+                  {isBulkMode && (
+                    <div 
+                      onClick={() => !isExporting && handleBulkDownload()}
+                      className={cn(
+                        "p-4 rounded-xl border relative overflow-hidden",
+                        isExporting ? "border-purple-500/50 bg-[#1c2229]" : "border-purple-500/40 bg-[#1c2229] ring-2 ring-purple-500/10 cursor-pointer hover:bg-[#252c36] group transition-all"
+                      )}
+                    >
+                      {isExporting && bulkExportInfo && (
+                        <motion.div 
+                          initial={{ width: 0 }}
+                          animate={{ width: `${exportProgress}%` }}
+                          className="absolute bottom-0 left-0 h-1 bg-purple-500 transition-all duration-300"
+                        />
+                      )}
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center group-hover:bg-purple-500/20">
+                          {isExporting ? <Loader2 size={24} className="text-purple-400 animate-spin" /> : <PlusCircle size={24} className="text-purple-400" />}
+                        </div>
+                        <div className="flex-1">
+                          <h4 className="font-bold text-purple-400">Bulk Download Video (ZIP)</h4>
+                          <p className="text-xs text-gray-500">Render all {bulkStories.filter(s => s.text.trim().length > 0).length} stories into a ZIP</p>
+                          {isExporting && bulkExportInfo && <p className="text-[10px] text-purple-400 font-bold uppercase tracking-widest mt-0.5">{bulkExportInfo} · {exportProgress}%</p>}
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Video Option */}
                   <div 
@@ -835,35 +973,42 @@ export default function App() {
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: 10 }}
-                className="space-y-6"
+                className="space-y-6 pb-20"
               >
-                <div className="flex gap-4">
-                  <div className="flex-1">
-                    <label className="text-xs text-gray-400 block mb-1">Highlight Color</label>
-                    <input type="color" value={highlightColor} onChange={(e) => setHighlightColor(e.target.value)} className="w-full h-10 rounded border border-[#353941] cursor-pointer bg-transparent" />
-                  </div>
-                  <div className="flex-1">
-                    <label className="text-xs text-gray-400 block mb-1">Text Color</label>
-                    <input type="color" value={textColor} onChange={(e) => setTextColor(e.target.value)} className="w-full h-10 rounded border border-[#353941] cursor-pointer bg-transparent" />
-                  </div>
-                </div>
+                {!isBulkMode && (
+                  <>
+                    <div className="flex gap-4">
+                      <div className="flex-1">
+                        <label className="text-xs text-gray-400 block mb-1">Highlight Color</label>
+                        <input type="color" value={highlightColor} onChange={(e) => setHighlightColor(e.target.value)} className="w-full h-10 rounded border border-[#353941] cursor-pointer bg-transparent" />
+                      </div>
+                      <div className="flex-1">
+                        <label className="text-xs text-gray-400 block mb-1">Text Color</label>
+                        <input type="color" value={textColor} onChange={(e) => setTextColor(e.target.value)} className="w-full h-10 rounded border border-[#353941] cursor-pointer bg-transparent" />
+                      </div>
+                    </div>
 
-                <div className="grid grid-cols-1">
-                  <button 
-                    onClick={handleRandomHighlight}
-                    className="w-full flex items-center justify-center gap-2 bg-[#8ab4f8] hover:bg-[#a1c2fa] text-black font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98] mt-2"
-                  >
-                    <Zap size={16} /> HIGHLIGHT TEXT
-                  </button>
-                  <p className="text-[10px] text-gray-500 text-center mt-2 italic px-4">Click to randomly highlight parts of your story with the selected style.</p>
-                </div>
+                    <div className="grid grid-cols-1">
+                      <button 
+                        onClick={() => handleRandomHighlight()}
+                        className="w-full flex items-center justify-center gap-2 bg-[#8ab4f8] hover:bg-[#a1c2fa] text-black font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98] mt-2"
+                      >
+                        <Zap size={16} /> HIGHLIGHT TEXT
+                      </button>
+                      <p className="text-[10px] text-gray-500 text-center mt-2 italic px-4">Click to randomly highlight parts of your story with the selected style.</p>
+                    </div>
+                  </>
+                )}
 
                 <div className="text-center font-bold text-[10px] text-gray-600 tracking-widest border-t border-b border-[#2a2d35] py-2 uppercase">
                   MODE SELECTION
                 </div>
 
                 <div className="flex items-center justify-between">
-                  <span className="text-xs text-gray-400">Bulk Mode (up to 10)</span>
+                  <div className="flex flex-col">
+                    <span className="text-xs text-gray-400">Bulk Mode</span>
+                    <span className="text-[10px] text-gray-500">Create up to 10 stories</span>
+                  </div>
                   <div 
                     onClick={() => setIsBulkMode(!isBulkMode)}
                     className={cn("w-10 h-5 rounded-full relative cursor-pointer transition-colors", isBulkMode ? "bg-blue-500" : "bg-[#2a2d35]")}
@@ -876,25 +1021,17 @@ export default function App() {
                   TYPOGRAPHY
                 </div>
 
-                <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="text-xs text-gray-400">{isBulkMode ? 'Bulk Stories (Double line break between stories)' : 'Story Content'}</label>
-                    <button 
-                      onClick={handleRandomHighlight}
-                      className="flex items-center gap-1.5 px-2 py-1 bg-[#2a2d35] hover:bg-[#353941] rounded text-[10px] text-blue-400 hover:text-blue-300 transition-all font-bold"
-                    >
-                      <Zap size={10} /> RANDOM HIGHLIGHT
-                    </button>
-                  </div>
-                  {isBulkMode ? (
-                    <textarea 
-                      value={bulkInput}
-                      onChange={(e) => setBulkInput(e.target.value)}
-                      rows={10}
-                      placeholder="Story 1&#10;&#10;Story 2..."
-                      className="w-full bg-[#2a2d35] border border-[#353941] rounded px-3 py-2 text-sm outline-none focus:border-blue-500 resize-none font-mono"
-                    />
-                  ) : (
+                {!isBulkMode ? (
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="text-xs text-gray-400">Story Content</label>
+                      <button 
+                        onClick={() => handleRandomHighlight()}
+                        className="flex items-center gap-1.5 px-2 py-1 bg-[#2a2d35] hover:bg-[#353941] rounded text-[10px] text-blue-400 hover:text-blue-300 transition-all font-bold"
+                      >
+                        <Zap size={10} /> RANDOM HIGHLIGHT
+                      </button>
+                    </div>
                     <textarea 
                       value={storyText}
                       onChange={(e) => setStoryText(e.target.value)}
@@ -902,8 +1039,75 @@ export default function App() {
                       placeholder="Type your story here."
                       className="w-full bg-[#2a2d35] border border-[#353941] rounded px-3 py-2 text-sm outline-none focus:border-blue-500 resize-none"
                     />
-                  )}
-                </div>
+                  </div>
+                ) : (
+                  <div className="space-y-8">
+                    {bulkStories.map((story, index) => (
+                      <div key={index} className="p-4 bg-[#1c2229] rounded-xl border border-[#2a2d35] space-y-4">
+                        <div className="flex items-center justify-between mb-2">
+                           <span className="text-[10px] font-black text-gray-600 tracking-[0.2em] uppercase">STORY #{index + 1}</span>
+                           <button 
+                              onClick={() => handleRandomHighlight(index)}
+                              className="flex items-center gap-1 text-[10px] text-blue-400 font-bold hover:text-blue-300 transition-colors"
+                           >
+                             <Zap size={10} /> RANDOM HIGHLIGHT
+                           </button>
+                        </div>
+                        
+                        <textarea 
+                          value={story.text}
+                          onChange={(e) => {
+                            const newBulk = [...bulkStories];
+                            newBulk[index].text = e.target.value;
+                            setBulkStories(newBulk);
+                          }}
+                          rows={4}
+                          placeholder={`Enter Story ${index + 1}...`}
+                          className="w-full bg-[#14161b] border border-[#2a2d35] rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 resize-none"
+                        />
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <div className="flex justify-between text-[10px] text-gray-500 mb-1">
+                              <span>Font Size</span>
+                              <span>{story.fontSize}px</span>
+                            </div>
+                            <input 
+                              type="range" 
+                              min="12" 
+                              max="100" 
+                              value={story.fontSize} 
+                              onChange={(e) => {
+                                const newBulk = [...bulkStories];
+                                newBulk[index].fontSize = parseInt(e.target.value);
+                                setBulkStories(newBulk);
+                              }} 
+                              className="w-full accent-blue-500" 
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-gray-500 block mb-1">Highlight</label>
+                            <div className="flex items-center gap-2">
+                              <input 
+                                type="color" 
+                                value={story.highlightColor} 
+                                onChange={(e) => {
+                                  const newBulk = [...bulkStories];
+                                  newBulk[index].highlightColor = e.target.value;
+                                  setBulkStories(newBulk);
+                                }} 
+                                className="w-6 h-6 rounded cursor-pointer bg-transparent border-none" 
+                              />
+                              <div className="flex-1 h-6 rounded bg-[#14161b] border border-[#2a2d35] relative overflow-hidden">
+                                <div className="absolute inset-0" style={{ backgroundColor: story.highlightColor }} />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 <div>
                   <label className="text-xs text-gray-400 block mb-1">Font Family</label>
@@ -1119,7 +1323,7 @@ export default function App() {
                         <span>Card Padding</span>
                         <span>{cardPadding}px</span>
                       </div>
-                      <input type="range" min="10" max="40" value={cardPadding} onChange={(e) => setCardPadding(parseInt(e.target.value))} className="w-full" />
+                      <input type="range" min="10" max="60" value={cardPadding} onChange={(e) => setCardPadding(parseInt(e.target.value))} className="w-full" />
                     </div>
                     <div>
                       <div className="flex justify-between text-xs text-gray-400 mb-1">
@@ -1290,30 +1494,47 @@ export default function App() {
 
         {/* Preview Area */}
         <div className="flex-1 flex flex-col items-center p-8 overflow-auto bg-[#0a0c10] gap-12">
-          {storiesToRender.map((story, index) => (
-            <div key={index} className="flex flex-col items-center gap-4">
-              {isBulkMode && (
-                <div className="flex items-center gap-3 self-start">
-                   <div className="px-3 py-1 bg-[#1a1d23] border border-[#2a2d35] rounded-full text-[10px] font-bold text-blue-400 uppercase tracking-widest">
-                    CARD #{index + 1}
-                  </div>
-                  <div className="h-px w-32 bg-gradient-to-r from-[#2a2d35] to-transparent" />
-                </div>
-              )}
+          {!isBulkMode ? (
+            <div className="flex flex-col items-center gap-4">
               <div 
                 className="relative overflow-visible shadow-[0_40px_100px_-20px_rgba(0,0,0,0.5)] rounded-2xl" 
                 style={{ width: '356px', height: '633px' }}
               >
                 <Poster 
                   {...posterProps} 
-                  storyText={story} 
-                  innerRef={index === 0 ? previewRef : null} 
+                  storyText={storyText} 
+                  hColor={highlightColor}
+                  fSize={fontSize}
+                  innerRef={previewRef} 
                 />
               </div>
             </div>
-          ))}
+          ) : (
+            bulkStories.filter(s => s.text.trim().length > 0).map((story, index) => (
+              <div key={index} className="flex flex-col items-center gap-4">
+                <div className="flex items-center gap-3 self-start">
+                   <div className="px-3 py-1 bg-[#1a1d23] border border-[#2a2d35] rounded-full text-[10px] font-bold text-blue-400 uppercase tracking-widest">
+                    CARD #{index + 1}
+                  </div>
+                  <div className="h-px w-32 bg-gradient-to-r from-[#2a2d35] to-transparent" />
+                </div>
+                <div 
+                  className="relative overflow-visible shadow-[0_40px_100px_-20px_rgba(0,0,0,0.5)] rounded-2xl bulk-poster-card" 
+                  style={{ width: '356px', height: '633px' }}
+                >
+                  <Poster 
+                    {...posterProps} 
+                    storyText={story.text} 
+                    hColor={story.highlightColor}
+                    fSize={story.fontSize}
+                    innerRef={index === 0 ? previewRef : null} 
+                  />
+                </div>
+              </div>
+            ))
+          )}
           
-          {isBulkMode && storiesToRender.length === 0 && (
+          {isBulkMode && bulkStories.every(s => s.text.trim().length === 0) && (
             <div className="flex flex-col items-center justify-center h-full text-gray-600 opacity-50">
               <Plus size={48} className="mb-4" />
               <p className="font-bold text-lg">Input some stories to see cards</p>
@@ -1330,11 +1551,11 @@ function Poster({
   innerRef, storyText, bgStyle, bgColor, gradEnd, avatarBorder, avatarBorderColor,
   profileImage, scribbleStyle, nameFont, nameHasBg, nameSize, nameColor,
   posterName, subFont, subtitleHasBg, subtitleSize, subtitleColor, subtitle,
-  cardColor, cardTransparency, cardRadius, cardPadding, fontFamily, fontSize,
+  cardColor, cardTransparency, cardRadius, cardPadding, fontFamily, fSize,
   fontWeight, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
   showFooter, footerFont, footerBgStyle, footerBgColor, footerTextColor, 
   footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor,
-  bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly
+  bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly, hColor
 }: any) {
   return (
     <div 
@@ -1381,11 +1602,11 @@ function Poster({
           {showDots && <div className="absolute inset-0 opacity-5 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 4px 4px, white 2px, transparent 0)', backgroundSize: '64px 64px' }}></div>}
 
           {/* Top Spacing */}
-          {showProfile && <div className="h-40 w-full" />}
+          {showProfile && <div className="h-40 w-full flex-shrink-0" />}
 
           {/* Profile Section */}
           {showProfile && (
-            <div className="w-full flex items-center gap-10 mb-12 z-10 px-16 self-start">
+            <div className="w-full flex items-center gap-10 mb-12 z-10 px-16 self-start flex-shrink-0">
               <div 
                 className={cn("w-40 h-40 rounded-full overflow-hidden flex-shrink-0 relative shadow-2xl bg-gray-200")}
                 style={{ border: avatarBorder ? `8px solid ${avatarBorderColor}` : 'none' }}
@@ -1395,7 +1616,7 @@ function Poster({
                   alt="Profile" 
                   className={cn(
                     "w-full h-full object-cover",
-                    scribbleStyle === 'blur' && "blur-[6px] scale-110",
+                    scribbleStyle === 'blur' && "blur-xl scale-110",
                     scribbleStyle === 'mosaic' && "contrast-150 brightness-110 blur-[2px] opacity-70"
                   )} 
                   referrerPolicy="no-referrer" 
@@ -1417,18 +1638,42 @@ function Poster({
                 )}
               </div>
               <div className="flex flex-col justify-center">
-                <div 
-                  className={cn("inline-block rounded px-1 text-ellipsis overflow-hidden whitespace-nowrap max-w-[800px]", nameFont, nameHasBg ? "bg-white/20 backdrop-blur-sm" : "")}
-                  style={{ 
-                    fontSize: `${nameSize}px`, 
-                    color: nameColor,
-                    fontWeight: '800',
-                    lineHeight: 1,
-                    letterSpacing: '-1px'
-                  }}
-                >
-                  {posterName}
+                <div className="relative rounded overflow-hidden flex flex-col items-start px-1">
+                  <div 
+                    className={cn(
+                      "inline-block text-ellipsis overflow-hidden whitespace-nowrap max-w-[800px] transition-all duration-300", 
+                      nameFont, 
+                      nameHasBg ? "bg-white/20 backdrop-blur-sm" : "",
+                      scribbleStyle === 'blur' && "blur-xl scale-105",
+                      scribbleStyle === 'mosaic' && "contrast-150 brightness-110 blur-[2px] opacity-70"
+                    )}
+                    style={{ 
+                      fontSize: `${nameSize}px`, 
+                      color: nameColor,
+                      fontWeight: '800',
+                      lineHeight: 1,
+                      letterSpacing: '-1px'
+                    }}
+                  >
+                    {posterName}
+                  </div>
+
+                  {/* Overlays for title ONLY */}
+                  {scribbleStyle === 'solid' && (
+                    <div className="absolute inset-0 bg-white/20 backdrop-blur-[2px] flex items-center justify-center pointer-events-none">
+                        <div className="w-full h-[40%] bg-blue-500/60 rotate-[-5deg] shadow-lg"></div>
+                    </div>
+                  )}
+                  {scribbleStyle === 'squiggle' && (
+                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <svg className="w-full h-full text-blue-500 opacity-60" viewBox="0 0 100 100" preserveAspectRatio="none">
+                            <path d="M 0 50 Q 25 30 50 50 T 100 50" fill="none" stroke="currentColor" strokeWidth="8" />
+                            <path d="M 0 25 Q 25 5 50 25 T 100 25" fill="none" stroke="currentColor" strokeWidth="8" />
+                        </svg>
+                      </div>
+                  )}
                 </div>
+
                 <div 
                   className={cn("block mt-2 rounded px-1", subFont, subtitleHasBg ? "bg-white/20 backdrop-blur-sm" : "")}
                   style={{ 
@@ -1446,7 +1691,7 @@ function Poster({
           )}
 
           {/* Card Body */}
-          <div className="w-full relative z-10 flex flex-col justify-center px-16 mb-24">
+          <div className="w-full relative z-10 flex flex-col px-16 mb-24">
             <div 
               className="w-full transition-all duration-300"
               style={{
@@ -1459,7 +1704,7 @@ function Poster({
               <div 
                 className={cn(fontFamily)}
                 style={{ 
-                  fontSize: `${fontSize}px`,
+                  fontSize: `${fSize}px`,
                   color: textColor,
                   textAlign: textAlign,
                   lineHeight: lineHeight,
@@ -1469,20 +1714,23 @@ function Poster({
                   whiteSpace: 'pre-wrap',
                 }}
               >
-                {renderStoryText(storyText)}
+                {renderStoryText(storyText, hColor)}
               </div>
             </div>
           </div>
 
           {/* Footer */}
           {showFooter && (
-            <div className="w-full mt-auto mb-20 flex justify-center z-10">
+            <div className={cn(
+              "w-full flex justify-center z-10 absolute",
+              footerBgStyle === 'fill' ? "bottom-0" : "bottom-20"
+            )}>
               <div 
                 className={cn(
                   "py-6 px-12 rounded-lg text-center transition-all flex items-center justify-center gap-6", 
                   footerFont,
                   footerBgStyle === 'card' && "w-[calc(100%-128px)]",
-                  footerBgStyle === 'fill' && "absolute bottom-0 left-0 right-0 py-12"
+                  footerBgStyle === 'fill' && "w-full py-12"
                 )}
                 style={{ 
                   backgroundColor: footerBgStyle === 'none' ? 'transparent' : 
