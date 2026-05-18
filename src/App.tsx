@@ -401,6 +401,10 @@ export default function App() {
   const [nameFont, setNameFont] = useState('font-merriweather');
   const [subFont, setSubFont] = useState('font-merriweather');
   const [scribbleStyle, setScribbleStyle] = useState('none');
+  const [profileMove, setProfileMove] = useState(0);
+  const [profilePosition, setProfilePosition] = useState('outside');
+  const [cardMove, setCardMove] = useState(0);
+  const [footerMove, setFooterMove] = useState(0);
   
   // Typography State
   const [storyText, setStoryText] = useState('Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [Again?] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...');
@@ -453,6 +457,8 @@ export default function App() {
 
   const handleReset = () => {
     applyPreset(TEMPLATE_PRESETS[1].id);
+    setActiveTab('profile');
+    setExportDuration(31);
     setProfileImage('https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=400&h=400');
     setPosterName('Buried Bell');
     setSubtitle('Will It Ring Again?');
@@ -464,9 +470,16 @@ export default function App() {
     })));
     setFooterText("CONTINUE READING IN COMMENT");
     setNameSize(82);
+    setNameHasBg(false);
     setSubtitleSize(44);
+    setSubtitleHasBg(false);
     setFontSize(62);
     setFontWeight('700');
+    setTextAlign('left');
+    setFontStyle('normal');
+    setLineHeight(1.25);
+    setLetterSpacing(0);
+    setHighlightUnderline(false);
     setFooterFontSize(32);
     setFooterBorderWidth(0);
     setFooterBorderColor('#000000');
@@ -474,10 +487,17 @@ export default function App() {
     setCardPadding(60);
     setCardTransparency(100);
     setScribbleStyle('none');
+    setProfileMove(0);
+    setProfilePosition('outside');
+    setCardMove(0);
+    setFooterMove(0);
     setFooterBgStyle('text');
     setFooterBgColor('#ffffff');
     setBgColor('#CEADE1');
     setBgStyle('solid');
+    setBgImage(null);
+    setBgImageOverlay(20);
+    setGradEnd('#FF6347');
     setCardColor('#FAF2FB');
     setNameColor('#2D0D44');
     setSubtitleColor('#8148B0');
@@ -486,7 +506,6 @@ export default function App() {
     setFooterTextColor('#150621');
     setAvatarBorder(true);
     setAvatarBorderColor('#ffffff');
-    setLineHeight(1.25);
     setShowCard(true);
     setShowFooter(true);
     setShowProfile(true);
@@ -790,7 +809,7 @@ export default function App() {
 
   const posterProps = {
     bgStyle, bgColor, gradEnd, avatarBorder, avatarBorderColor, profileImage, 
-    scribbleStyle, nameFont, nameHasBg, nameSize, nameColor, posterName, 
+    scribbleStyle, profileMove, profilePosition, cardMove, footerMove, nameFont, nameHasBg, nameSize, nameColor, posterName, 
     subFont, subtitleHasBg, subtitleSize, subtitleColor, subtitle, 
     cardColor, cardTransparency, cardRadius, cardPadding, fontFamily, 
     fontWeight, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
@@ -1124,9 +1143,14 @@ export default function App() {
                     </select>
                   </div>
                   <div>
-                    <div className="flex justify-between text-xs text-gray-400 mb-1">
-                      <span>Name / Title Size</span>
-                      <span>{nameSize} px</span>
+                    <div className="flex justify-between items-center mb-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-gray-400">Name / Title Size</span>
+                        <button onClick={() => setNameSize(82)} title="Reset to 82px" className="text-gray-500 hover:text-blue-400 transition-colors">
+                          <RotateCcw size={10} />
+                        </button>
+                      </div>
+                      <span className="text-xs text-gray-500">{nameSize} px</span>
                     </div>
                     <input type="range" min="20" max="150" value={nameSize} onChange={(e) => setNameSize(parseInt(e.target.value))} className="w-full" />
                   </div>
@@ -1168,9 +1192,14 @@ export default function App() {
                       >
                         {fonts.map(f => (<option key={f.value} value={f.value} className={f.value}>{f.label}</option>))}
                       </select>
-                    <div className="flex justify-between text-xs text-gray-400 mb-1">
-                      <span>Subtitle Size</span>
-                      <span>{subtitleSize} px</span>
+                    <div className="flex justify-between items-center mb-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-gray-400">Subtitle Size</span>
+                        <button onClick={() => setSubtitleSize(44)} title="Reset to 44px" className="text-gray-500 hover:text-blue-400 transition-colors">
+                          <RotateCcw size={10} />
+                        </button>
+                      </div>
+                      <span className="text-xs text-gray-500">{subtitleSize} px</span>
                     </div>
                     <input type="range" min="10" max="100" value={subtitleSize} onChange={(e) => setSubtitleSize(parseInt(e.target.value))} className="w-full" />
                   </div>
@@ -1230,6 +1259,60 @@ export default function App() {
                      <option value="solid">Solid bar</option>
                      <option value="mosaic">Mosaic</option>
                    </select>
+                </div>
+
+                <div className="mt-4">
+                  <label className="text-xs text-gray-400 block mb-1">Profile Position</label>
+                  <select 
+                    value={profilePosition}
+                    onChange={(e) => setProfilePosition(e.target.value)}
+                    className="w-full bg-[#2a2d35] border border-[#353941] rounded px-3 py-2 text-sm outline-none focus:border-blue-500 mb-4"
+                  >
+                    <option value="outside">Outside Card</option>
+                    <option value="inside">Inside Card</option>
+                  </select>
+                </div>
+
+                <div className="mt-4">
+                  <div className="flex justify-between mb-1 items-center">
+                    <div className="flex items-center gap-1.5">
+                      <label className="text-xs text-gray-400 block">Profile Move (Upward)</label>
+                      <button onClick={() => setProfileMove(0)} title="Reset to 0px" className="text-gray-500 hover:text-blue-400 transition-colors">
+                        <RotateCcw size={10} />
+                      </button>
+                    </div>
+                    <span className="text-xs text-gray-500">{profileMove}px</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="0" 
+                    max="400" 
+                    step="1"
+                    value={profileMove}
+                    onChange={(e) => setProfileMove(parseInt(e.target.value))}
+                    className="w-full accent-blue-500"
+                  />
+                </div>
+
+                <div className="mt-4">
+                  <div className="flex justify-between mb-1 items-center">
+                    <div className="flex items-center gap-1.5">
+                      <label className="text-xs text-gray-400 block">Card Move (Vertical)</label>
+                      <button onClick={() => setCardMove(0)} title="Reset to 0px" className="text-gray-500 hover:text-blue-400 transition-colors">
+                        <RotateCcw size={10} />
+                      </button>
+                    </div>
+                    <span className="text-xs text-gray-500">{cardMove}px</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="-400" 
+                    max="400" 
+                    step="1"
+                    value={cardMove}
+                    onChange={(e) => setCardMove(parseInt(e.target.value))}
+                    className="w-full accent-blue-500"
+                  />
                 </div>
 
                 <div className="pt-4 border-t border-[#2a2d35]">
@@ -1451,23 +1534,38 @@ export default function App() {
                     </div>
                   </div>
                   <div>
-                    <div className="flex justify-between text-xs text-gray-400 mb-1">
-                      <span>Font Size</span>
-                      <span>{fontSize} px</span>
+                    <div className="flex justify-between items-center mb-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-gray-400">Font Size</span>
+                        <button onClick={() => setFontSize(62)} title="Reset to 62px" className="text-gray-500 hover:text-blue-400 transition-colors">
+                          <RotateCcw size={10} />
+                        </button>
+                      </div>
+                      <span className="text-xs text-gray-500">{fontSize} px</span>
                     </div>
                     <input type="range" min="12" max="100" value={fontSize} onChange={(e) => setFontSize(parseInt(e.target.value))} className="w-full" />
                   </div>
                   <div>
-                    <div className="flex justify-between text-xs text-gray-400 mb-1">
-                      <span>Line Height</span>
-                      <span>{lineHeight}x</span>
+                    <div className="flex justify-between items-center mb-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-gray-400">Line Height</span>
+                        <button onClick={() => setLineHeight(1.25)} title="Reset to 1.25x" className="text-gray-500 hover:text-blue-400 transition-colors">
+                          <RotateCcw size={10} />
+                        </button>
+                      </div>
+                      <span className="text-xs text-gray-500">{lineHeight}x</span>
                     </div>
                     <input type="range" min="1" max="2.5" step="0.1" value={lineHeight} onChange={(e) => setLineHeight(parseFloat(e.target.value))} className="w-full" />
                   </div>
                   <div>
-                    <div className="flex justify-between text-xs text-gray-400 mb-1">
-                      <span>Letter Spacing</span>
-                      <span>{letterSpacing} px</span>
+                    <div className="flex justify-between items-center mb-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-gray-400">Letter Spacing</span>
+                        <button onClick={() => setLetterSpacing(0)} title="Reset to 0px" className="text-gray-500 hover:text-blue-400 transition-colors">
+                          <RotateCcw size={10} />
+                        </button>
+                      </div>
+                      <span className="text-xs text-gray-500">{letterSpacing} px</span>
                     </div>
                     <input type="range" min="-2" max="10" value={letterSpacing} onChange={(e) => setLetterSpacing(parseInt(e.target.value))} className="w-full" />
                   </div>
@@ -1525,9 +1623,14 @@ export default function App() {
                 {bgStyle === 'image' && bgImage && (
                   <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
                     <div>
-                      <div className="flex justify-between text-xs text-gray-400 mb-1">
-                        <span>Dark Overlay</span>
-                        <span>{bgImageOverlay}%</span>
+                      <div className="flex justify-between items-center mb-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-gray-400">Dark Overlay</span>
+                          <button onClick={() => setBgImageOverlay(20)} title="Reset to 20%" className="text-gray-500 hover:text-blue-400 transition-colors">
+                            <RotateCcw size={10} />
+                          </button>
+                        </div>
+                        <span className="text-xs text-gray-500">{bgImageOverlay}%</span>
                       </div>
                       <input 
                         type="range" 
@@ -1622,23 +1725,38 @@ export default function App() {
 
                   <div className={cn("space-y-4 transition-all duration-300", !showCard && "opacity-20 pointer-events-none grayscale")}>
                     <div>
-                      <div className="flex justify-between text-xs text-gray-400 mb-1">
-                        <span>Card Radius</span>
-                        <span>{cardRadius}px</span>
+                      <div className="flex justify-between items-center mb-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-gray-400">Card Radius</span>
+                          <button onClick={() => setCardRadius(36)} title="Reset to 36px" className="text-gray-500 hover:text-blue-400 transition-colors">
+                            <RotateCcw size={10} />
+                          </button>
+                        </div>
+                        <span className="text-xs text-gray-500">{cardRadius}px</span>
                       </div>
                       <input type="range" min="0" max="60" value={cardRadius} onChange={(e) => setCardRadius(parseInt(e.target.value))} className="w-full" />
                     </div>
                     <div>
-                      <div className="flex justify-between text-xs text-gray-400 mb-1">
-                        <span>Card Padding</span>
-                        <span>{cardPadding}px</span>
+                      <div className="flex justify-between items-center mb-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-gray-400">Card Padding</span>
+                          <button onClick={() => setCardPadding(60)} title="Reset to 60px" className="text-gray-500 hover:text-blue-400 transition-colors">
+                            <RotateCcw size={10} />
+                          </button>
+                        </div>
+                        <span className="text-xs text-gray-500">{cardPadding}px</span>
                       </div>
                       <input type="range" min="10" max="60" value={cardPadding} onChange={(e) => setCardPadding(parseInt(e.target.value))} className="w-full" />
                     </div>
                     <div>
-                      <div className="flex justify-between text-xs text-gray-400 mb-1">
-                        <span>Card Transparency</span>
-                        <span>{cardTransparency}%</span>
+                      <div className="flex justify-between items-center mb-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-gray-400">Card Transparency</span>
+                          <button onClick={() => setCardTransparency(100)} title="Reset to 100%" className="text-gray-500 hover:text-blue-400 transition-colors">
+                            <RotateCcw size={10} />
+                          </button>
+                        </div>
+                        <span className="text-xs text-gray-500">{cardTransparency}%</span>
                       </div>
                       <input type="range" min="0" max="100" value={cardTransparency} onChange={(e) => setCardTransparency(parseInt(e.target.value))} className="w-full" />
                     </div>
@@ -1723,9 +1841,14 @@ export default function App() {
                 </div>
 
                 <div>
-                   <div className="flex justify-between text-xs text-gray-400 mb-1">
-                      <span>Footer Font Size</span>
-                      <span>{footerFontSize} px</span>
+                   <div className="flex justify-between items-center mb-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-gray-400">Footer Font Size</span>
+                        <button onClick={() => setFooterFontSize(32)} title="Reset to 32px" className="text-gray-500 hover:text-blue-400 transition-colors">
+                          <RotateCcw size={10} />
+                        </button>
+                      </div>
+                      <span className="text-xs text-gray-500">{footerFontSize} px</span>
                     </div>
                     <input type="range" min="8" max="100" value={footerFontSize} onChange={(e) => setFooterFontSize(parseInt(e.target.value))} className="w-full" />
                 </div>
@@ -1749,6 +1872,27 @@ export default function App() {
                     <label className="text-xs text-gray-400 block mb-1">Footer Text Color</label>
                     <input type="color" value={footerTextColor} onChange={(e) => setFooterTextColor(e.target.value)} className="w-full h-10 rounded border border-[#353941] cursor-pointer bg-transparent" />
                   </div>
+                </div>
+
+                <div>
+                  <div className="flex justify-between mb-1 items-center">
+                    <div className="flex items-center gap-1.5">
+                      <label className="text-xs text-gray-400 block">Footer Move (Vertical)</label>
+                      <button onClick={() => setFooterMove(0)} title="Reset to 0px" className="text-gray-500 hover:text-blue-400 transition-colors">
+                        <RotateCcw size={10} />
+                      </button>
+                    </div>
+                    <span className="text-xs text-gray-500">{footerMove}px</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="-400" 
+                    max="400" 
+                    step="1"
+                    value={footerMove}
+                    onChange={(e) => setFooterMove(parseInt(e.target.value))}
+                    className="w-full accent-blue-500"
+                  />
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
@@ -1872,7 +2016,7 @@ export default function App() {
 // Sub-component for clean rendering
 function Poster({ 
   innerRef, storyText, bgStyle, bgColor, gradEnd, avatarBorder, avatarBorderColor,
-  profileImage, scribbleStyle, nameFont, nameHasBg, nameSize, nameColor,
+  profileImage, scribbleStyle, profileMove, profilePosition, cardMove, footerMove, nameFont, nameHasBg, nameSize, nameColor,
   posterName, subFont, subtitleHasBg, subtitleSize, subtitleColor, subtitle,
   cardColor, cardTransparency, cardRadius, cardPadding, fontFamily, fSize,
   fontWeight, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
@@ -1882,6 +2026,98 @@ function Poster({
   videoBackground, isExporting
 }: any) {
   const isCardPadded = showCard || !removePaddingWhenHidden;
+  const isBlur = scribbleStyle === 'blur' || scribbleStyle === 'title-blur';
+
+  const profileSection = (
+    <div 
+      className={cn(
+        "w-full flex items-center gap-10 z-20 self-start flex-shrink-0 transition-all duration-300",
+        profilePosition === 'outside' ? "mb-12 px-16" : "mb-12"
+      )}
+      style={{ transform: `translateY(-${profileMove}px)` }}
+    >
+      <div 
+        className={cn("w-40 h-40 rounded-full overflow-hidden flex-shrink-0 relative shadow-2xl bg-gray-200")}
+        style={{ border: avatarBorder ? `8px solid ${avatarBorderColor}` : 'none' }}
+      >
+        <img 
+          src={profileImage} 
+          alt="Profile" 
+          className={cn(
+            "w-full h-full object-cover",
+            scribbleStyle === 'blur' && "blur-xl scale-110",
+            scribbleStyle === 'mosaic' && "contrast-150 brightness-110 blur-[2px] opacity-70"
+          )} 
+          referrerPolicy="no-referrer" 
+          crossOrigin="anonymous" 
+        />
+        {scribbleStyle === 'solid' && (
+          <div className="absolute inset-0 bg-white/40 backdrop-blur-sm flex items-center justify-center">
+              <div className="w-full h-[30%] bg-blue-500/80 rotate-[-15deg]"></div>
+          </div>
+        )}
+        {scribbleStyle === 'squiggle' && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/10">
+              <svg className="w-full h-full text-blue-500 opacity-80" viewBox="0 0 100 100">
+                  <path d="M 0 50 Q 25 30 50 50 T 100 50" fill="none" stroke="currentColor" strokeWidth="15" />
+                  <path d="M 0 30 Q 25 10 50 30 T 100 30" fill="none" stroke="currentColor" strokeWidth="15" />
+                  <path d="M 0 70 Q 25 50 50 70 T 100 70" fill="none" stroke="currentColor" strokeWidth="15" />
+              </svg>
+            </div>
+        )}
+      </div>
+      <div className="flex flex-col justify-center">
+        <div className="relative rounded overflow-hidden flex flex-col items-start px-1">
+          <div 
+            className={cn(
+              "inline-block text-ellipsis overflow-hidden whitespace-nowrap max-w-[800px] transition-all duration-300", 
+              nameFont, 
+              nameHasBg ? "bg-white/20 backdrop-blur-sm" : "",
+              isBlur && "blur-xl scale-105",
+              scribbleStyle === 'mosaic' && "contrast-150 brightness-110 blur-[2px] opacity-70"
+            )}
+            style={{ 
+              fontSize: `${nameSize}px`, 
+              color: nameColor,
+              fontWeight: '800',
+              lineHeight: 1,
+              letterSpacing: '-1px'
+            }}
+          >
+            {posterName}
+          </div>
+
+          {/* Overlays for title ONLY */}
+          {scribbleStyle === 'solid' && (
+            <div className="absolute inset-0 bg-white/20 backdrop-blur-[2px] flex items-center justify-center pointer-events-none">
+                <div className="w-full h-[40%] bg-blue-500/60 rotate-[-5deg] shadow-lg"></div>
+            </div>
+          )}
+          {scribbleStyle === 'squiggle' && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <svg className="w-full h-full text-blue-500 opacity-60" viewBox="0 0 100 100" preserveAspectRatio="none">
+                    <path d="M 0 50 Q 25 30 50 50 T 100 50" fill="none" stroke="currentColor" strokeWidth="8" />
+                    <path d="M 0 25 Q 25 5 50 25 T 100 25" fill="none" stroke="currentColor" strokeWidth="8" />
+                </svg>
+              </div>
+          )}
+        </div>
+
+        <div 
+          className={cn("block mt-2 rounded px-1", subFont, subtitleHasBg ? "bg-white/20 backdrop-blur-sm" : "")}
+          style={{ 
+            fontSize: `${subtitleSize}px`, 
+            color: subtitleColor,
+            opacity: 0.9,
+            lineHeight: 1,
+            fontWeight: '500'
+          }}
+        >
+          {subtitle}
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div 
@@ -1945,107 +2181,33 @@ function Poster({
           {/* Design Elements */}
           {showDots && <div className="absolute inset-0 opacity-5 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 4px 4px, white 2px, transparent 0)', backgroundSize: '64px 64px' }}></div>}
 
-          {/* Top Spacing */}
-          {showProfile && <div className="h-40 w-full flex-shrink-0" />}
+          {/* Top Spacing - Always present to keep card layout stable */}
+          <div style={{ height: `${Math.max(0, 160 - profileMove)}px` }} className="w-full flex-shrink-0 transition-all duration-300" />
 
-          {/* Profile Section */}
-          {showProfile && (
-            <div className="w-full flex items-center gap-10 mb-12 z-10 px-16 self-start flex-shrink-0">
-              <div 
-                className={cn("w-40 h-40 rounded-full overflow-hidden flex-shrink-0 relative shadow-2xl bg-gray-200")}
-                style={{ border: avatarBorder ? `8px solid ${avatarBorderColor}` : 'none' }}
-              >
-                <img 
-                  src={profileImage} 
-                  alt="Profile" 
-                  className={cn(
-                    "w-full h-full object-cover",
-                    scribbleStyle === 'blur' && "blur-xl scale-110",
-                    scribbleStyle === 'mosaic' && "contrast-150 brightness-110 blur-[2px] opacity-70"
-                  )} 
-                  referrerPolicy="no-referrer" 
-                  crossOrigin="anonymous" 
-                />
-                {scribbleStyle === 'solid' && (
-                  <div className="absolute inset-0 bg-white/40 backdrop-blur-sm flex items-center justify-center">
-                      <div className="w-full h-[30%] bg-blue-500/80 rotate-[-15deg]"></div>
-                  </div>
-                )}
-                {scribbleStyle === 'squiggle' && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/10">
-                      <svg className="w-full h-full text-blue-500 opacity-80" viewBox="0 0 100 100">
-                          <path d="M 0 50 Q 25 30 50 50 T 100 50" fill="none" stroke="currentColor" strokeWidth="15" />
-                          <path d="M 0 30 Q 25 10 50 30 T 100 30" fill="none" stroke="currentColor" strokeWidth="15" />
-                          <path d="M 0 70 Q 25 50 50 70 T 100 70" fill="none" stroke="currentColor" strokeWidth="15" />
-                      </svg>
-                    </div>
-                )}
-              </div>
-              <div className="flex flex-col justify-center">
-                <div className="relative rounded overflow-hidden flex flex-col items-start px-1">
-                  <div 
-                    className={cn(
-                      "inline-block text-ellipsis overflow-hidden whitespace-nowrap max-w-[800px] transition-all duration-300", 
-                      nameFont, 
-                      nameHasBg ? "bg-white/20 backdrop-blur-sm" : "",
-                      scribbleStyle === 'blur' && "blur-xl scale-105",
-                      scribbleStyle === 'title-blur' && "blur-xl scale-105",
-                      scribbleStyle === 'mosaic' && "contrast-150 brightness-110 blur-[2px] opacity-70"
-                    )}
-                    style={{ 
-                      fontSize: `${nameSize}px`, 
-                      color: nameColor,
-                      fontWeight: '800',
-                      lineHeight: 1,
-                      letterSpacing: '-1px'
-                    }}
-                  >
-                    {posterName}
-                  </div>
+          {/* Profile Section (Conditional Outside) */}
+          {showProfile && profilePosition === 'outside' && profileSection}
 
-                  {/* Overlays for title ONLY */}
-                  {scribbleStyle === 'solid' && (
-                    <div className="absolute inset-0 bg-white/20 backdrop-blur-[2px] flex items-center justify-center pointer-events-none">
-                        <div className="w-full h-[40%] bg-blue-500/60 rotate-[-5deg] shadow-lg"></div>
-                    </div>
-                  )}
-                  {scribbleStyle === 'squiggle' && (
-                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                        <svg className="w-full h-full text-blue-500 opacity-60" viewBox="0 0 100 100" preserveAspectRatio="none">
-                            <path d="M 0 50 Q 25 30 50 50 T 100 50" fill="none" stroke="currentColor" strokeWidth="8" />
-                            <path d="M 0 25 Q 25 5 50 25 T 100 25" fill="none" stroke="currentColor" strokeWidth="8" />
-                        </svg>
-                      </div>
-                  )}
-                </div>
-
-                <div 
-                  className={cn("block mt-2 rounded px-1", subFont, subtitleHasBg ? "bg-white/20 backdrop-blur-sm" : "")}
-                  style={{ 
-                    fontSize: `${subtitleSize}px`, 
-                    color: subtitleColor,
-                    opacity: 0.9,
-                    lineHeight: 1,
-                    fontWeight: '500'
-                  }}
-                >
-                  {subtitle}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Card Body */}
-          <div className="w-full relative z-10 flex flex-col px-16 mb-24">
+          {/* Card Body Container */}
+          <div 
+            className="w-full relative z-10 flex flex-col px-16 mb-24 transition-all duration-300"
+            style={{ 
+              marginTop: (showProfile && profilePosition === 'outside') ? `-${profileMove}px` : (profilePosition === 'outside' ? `-${profileMove}px` : '0px'),
+              transform: `translateY(${cardMove}px)`
+            }}
+          >
             <div 
-              className="w-full transition-all duration-300"
+              className="w-full transition-all duration-300 flex flex-col"
               style={{
                 backgroundColor: showCard ? `${cardColor}${Math.round(cardTransparency * 2.55).toString(16).padStart(2, '0')}` : 'transparent',
                 borderRadius: showCard ? `${cardRadius}px` : '0px',
                 padding: isCardPadded ? `${cardPadding}px` : '0px',
+                paddingTop: showCard && showProfile && profilePosition === 'inside' ? `${(isCardPadded ? cardPadding : 0) + profileMove}px` : (isCardPadded ? `${cardPadding}px` : '0px'),
                 boxShadow: showCard ? '0 30px 80px -15px rgba(0,0,0,0.15)' : 'none',
               }}
             >
+              {/* Profile Section (Conditional Inside) */}
+              {showProfile && profilePosition === 'inside' && profileSection}
+
               <div 
                 className={cn(fontFamily)}
                 style={{ 
@@ -2066,10 +2228,13 @@ function Poster({
 
           {/* Footer */}
           {showFooter && (
-            <div className={cn(
-              "w-full flex justify-center z-10 absolute",
-              footerBgStyle === 'fill' ? "bottom-0" : "bottom-20"
-            )}>
+            <div 
+              className={cn(
+                "w-full flex justify-center z-10 absolute transition-all duration-300",
+                footerBgStyle === 'fill' ? "bottom-0" : "bottom-20"
+              )}
+              style={{ transform: `translateY(${footerMove}px)` }}
+            >
               <div 
                 className={cn(
                   "py-6 px-12 rounded-lg text-center transition-all flex items-center justify-center gap-6", 
