@@ -82,7 +82,7 @@ export default function App() {
     return 'video/webm';
   }, []);
 
-  const recordCanvasToMp4 = async (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void) => {
+  const recordCanvasToMp4 = async (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0) => {
     // Check for WebCodecs support
     if (!('VideoEncoder' in window) || !('VideoFrame' in window)) {
       throw new Error('WebCodecs API not supported');
@@ -96,6 +96,26 @@ export default function App() {
 
     const fps = 30;
     const totalFrames = duration * fps;
+
+    // Create a recording canvas that we will draw into
+    const offscreen = document.createElement('canvas');
+    offscreen.width = width;
+    offscreen.height = height;
+    const ctx = offscreen.getContext('2d', { alpha: false });
+    if (!ctx) throw new Error('Could not get offscreen canvas context');
+
+    // Create a temporary video element for source frames if a video URL is provided
+    let video: HTMLVideoElement | null = null;
+    if (videoUrl) {
+      video = document.createElement('video');
+      video.src = videoUrl;
+      video.crossOrigin = 'anonymous';
+      video.muted = true;
+      video.play(); // Start playing so we can capture frames
+      await new Promise((resolve) => {
+        video!.onloadeddata = resolve;
+      });
+    }
 
     const muxer = new Muxer({
       target: new ArrayBufferTarget(),
@@ -171,9 +191,54 @@ export default function App() {
 
       const timestamp = (frameIndex * 1000000) / fps;
       
-      // We create a new VideoFrame using the canvas. 
-      // We use the visibleRect to ensure it matches the possibly adjusted width/height
-      const frame = new VideoFrame(canvas, { 
+      // Clear canvas
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, width, height);
+
+      // 1. Draw video background
+      if (video) {
+        // Sync video time
+        video.currentTime = (frameIndex / fps) % video.duration;
+        
+        await new Promise(r => {
+          const onSeeked = () => {
+            video!.removeEventListener('seeked', onSeeked);
+            r(null);
+          };
+          video!.addEventListener('seeked', onSeeked);
+          // Safety timeout
+          setTimeout(r, 100);
+        });
+        
+        // Draw video with "cover" logic
+        const videoAspect = video.videoWidth / video.videoHeight;
+        const canvasAspect = width / height;
+        let drawW = width;
+        let drawH = height;
+        let drawX = 0;
+        let drawY = 0;
+
+        if (videoAspect > canvasAspect) {
+          drawW = height * videoAspect;
+          drawX = (width - drawW) / 2;
+        } else {
+          drawH = width / videoAspect;
+          drawY = (height - drawH) / 2;
+        }
+        ctx.drawImage(video, drawX, drawY, drawW, drawH);
+
+        // Apply overlay if needed
+        if (overlayOpacity > 0) {
+          ctx.fillStyle = `rgba(0, 0, 0, ${overlayOpacity / 100})`;
+          ctx.fillRect(0, 0, width, height);
+        }
+      }
+
+      // 2. Draw UI snapshot on top
+      ctx.drawImage(canvas, 0, 0, width, height);
+
+      // We create a new VideoFrame using the offscreen canvas. 
+      const frame = new VideoFrame(offscreen, { 
         timestamp,
         visibleRect: { x: 0, y: 0, width, height },
         displayWidth: width,
@@ -209,24 +274,42 @@ export default function App() {
     return new Blob([buffer], { type: 'video/mp4' });
   };
 
-  const recordWithFallback = async (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void) => {
+  const recordWithFallback = async (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0) => {
     if ('VideoEncoder' in window) {
       try {
-        return await recordCanvasToMp4(canvas, duration, onProgress);
+        return await recordCanvasToMp4(canvas, duration, onProgress, videoUrl, overlayOpacity);
       } catch (err) {
         console.error('VideoEncoder failed, falling back to MediaRecorder:', err);
       }
     }
-    return await recordCanvasMediaRecorder(canvas, duration, onProgress);
+    return await recordCanvasMediaRecorder(canvas, duration, onProgress, videoUrl, overlayOpacity);
   };
 
-  const recordCanvasMediaRecorder = (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void): Promise<Blob> => {
-    return new Promise((resolve) => {
-      const stream = canvas.captureStream(30);
+  const recordCanvasMediaRecorder = (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0): Promise<Blob> => {
+    return new Promise(async (resolve) => {
+      const width = canvas.width;
+      const height = canvas.height;
+      const offscreen = document.createElement('canvas');
+      offscreen.width = width;
+      offscreen.height = height;
+      const ctx = offscreen.getContext('2d', { alpha: false });
+      if (!ctx) throw new Error('Could not get offscreen canvas context');
+
+      let video: HTMLVideoElement | null = null;
+      if (videoUrl) {
+        video = document.createElement('video');
+        video.src = videoUrl;
+        video.crossOrigin = 'anonymous';
+        video.muted = true;
+        video.play();
+        await new Promise((r) => { video!.onloadeddata = r; });
+      }
+
+      const stream = offscreen.captureStream(30);
       const mimeType = getSupportedMimeType();
       const mediaRecorder = new MediaRecorder(stream, { 
         mimeType,
-        videoBitsPerSecond: 6000000
+        videoBitsPerSecond: 12000000 // Higher bit rate for composited video
       });
       const chunks: Blob[] = [];
 
@@ -240,27 +323,56 @@ export default function App() {
 
       mediaRecorder.start();
       
-      const startTime = Date.now();
-      const totalMs = duration * 1000;
-      const ctx = canvas.getContext('2d');
+      const fps = 30;
+      const totalFrames = duration * fps;
+      
+      for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
+        // Clear and Draw
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, width, height);
 
-      const intervalId = setInterval(() => {
-        const elapsed = Date.now() - startTime;
-        const progress = Math.min(100, Math.floor((elapsed / totalMs) * 100));
-        
-        if (onProgress) onProgress(progress);
-        
-        // Force frame update
-        if (ctx) {
-          const pixel = ctx.getImageData(0, 0, 1, 1);
-          ctx.putImageData(pixel, 0, 0);
+        if (video) {
+          video.currentTime = (frameIndex / fps) % video.duration;
+          await new Promise(r => {
+            const onSeeked = () => {
+              video!.removeEventListener('seeked', onSeeked);
+              r(null);
+            };
+            video!.addEventListener('seeked', onSeeked);
+            setTimeout(r, 100);
+          });
+          
+          const videoAspect = video.videoWidth / video.videoHeight;
+          const canvasAspect = width / height;
+          let drawW = width;
+          let drawH = height;
+          let drawX = 0;
+          let drawY = 0;
+
+          if (videoAspect > canvasAspect) {
+            drawW = height * videoAspect;
+            drawX = (width - drawW) / 2;
+          } else {
+            drawH = width / videoAspect;
+            drawY = (height - drawH) / 2;
+          }
+          ctx.drawImage(video, drawX, drawY, drawW, drawH);
+
+          if (overlayOpacity > 0) {
+            ctx.fillStyle = `rgba(0, 0, 0, ${overlayOpacity / 100})`;
+            ctx.fillRect(0, 0, width, height);
+          }
         }
 
-        if (elapsed >= totalMs) {
-          clearInterval(intervalId);
-          mediaRecorder.stop();
-        }
-      }, 100);
+        ctx.drawImage(canvas, 0, 0, width, height);
+        
+        if (onProgress) onProgress(Math.floor((frameIndex / totalFrames) * 100));
+        
+        // Small delay to allow stream to capture
+        await new Promise(r => setTimeout(r, 1000/fps));
+      }
+
+      mediaRecorder.stop();
     });
   };
   
@@ -318,6 +430,8 @@ export default function App() {
   const [showDots, setShowDots] = useState(true);
   const [fullImageOnly, setFullImageOnly] = useState<string | null>(null);
   const [removePaddingWhenHidden, setRemovePaddingWhenHidden] = useState(false);
+  const [videoBackground, setVideoBackground] = useState<string | null>(null);
+  const [previousBgStyle, setPreviousBgStyle] = useState<'solid' | 'gradient' | 'image' | null>(null);
 
   // Footer State
   const [showFooter, setShowFooter] = useState(true);
@@ -334,6 +448,7 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const bgFileInputRef = useRef<HTMLInputElement>(null);
+  const videoBgInputRef = useRef<HTMLInputElement>(null);
   const fullImageInputRef = useRef<HTMLInputElement>(null);
 
   const handleReset = () => {
@@ -377,6 +492,8 @@ export default function App() {
     setShowProfile(true);
     setShowDots(true);
     setFullImageOnly(null);
+    setVideoBackground(null);
+    setPreviousBgStyle(null);
     setRemovePaddingWhenHidden(false);
   };
 
@@ -392,6 +509,8 @@ export default function App() {
     setShowProfile(true);
     setShowDots(true);
     setFullImageOnly(null);
+    setVideoBackground(null);
+    setPreviousBgStyle(null);
     setRemovePaddingWhenHidden(false);
   };
 
@@ -464,6 +583,19 @@ export default function App() {
     }
   };
 
+  const handleVideoBgUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const url = URL.createObjectURL(file);
+      // Only set previous style if we haven't already (e.g. if changing from one video to another)
+      if (!videoBackground) {
+        setPreviousBgStyle(bgStyle);
+      }
+      setVideoBackground(url);
+      setBgStyle('image'); // Switch to image style to show media
+    }
+  };
+
   const handleBulkDownload = useCallback(async () => {
     const cardElements = document.querySelectorAll('.bulk-poster-card');
     if (cardElements.length === 0) return;
@@ -476,6 +608,9 @@ export default function App() {
     const JSZip = (await import('jszip')).default;
     const zip = new JSZip();
     const total = cardElements.length;
+    
+    // Wait for UI to update (hide video backgrounds)
+    await new Promise(r => setTimeout(r, 500));
     
     for (let i = 0; i < total; i++) {
       const node = cardElements[i] as HTMLElement;
@@ -496,7 +631,7 @@ export default function App() {
             const videoBlob = await recordWithFallback(canvas, exportDuration, (cardProgress) => {
               const overallProgress = Math.floor(((i + (cardProgress / 100)) / total) * 100);
               setExportProgress(overallProgress);
-            });
+            }, videoBackground, bgImageOverlay);
             resolve(videoBlob);
           } catch (err) {
             console.error('Bulk export error:', err);
@@ -560,7 +695,8 @@ export default function App() {
       // Video Export (H.264 MP4 with proper metadata)
       setExportProgress(0);
       
-      toCanvas(node, { 
+      setTimeout(() => {
+        toCanvas(node, { 
         pixelRatio: 1,
         cacheBust: true,
         style: {
@@ -574,7 +710,7 @@ export default function App() {
           try {
             const blob = await recordWithFallback(canvas, exportDuration, (p) => {
               setExportProgress(p);
-            });
+            }, videoBackground, bgImageOverlay);
             
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
@@ -598,6 +734,7 @@ export default function App() {
           setIsExporting(false);
           setExportProgress(0);
         });
+      }, 500);
     }
   }, [previewRef, exportDuration]);
   
@@ -659,7 +796,8 @@ export default function App() {
     fontWeight, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
     showFooter, footerFont, footerBgStyle, footerBgColor, footerTextColor, 
     footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor,
-    bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly, removePaddingWhenHidden
+    bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly, removePaddingWhenHidden,
+    videoBackground, isExporting
   };
 
   return (
@@ -689,6 +827,15 @@ export default function App() {
         onChange={handleFullImageUpload} 
         className="hidden" 
         accept="image/*"
+      />
+
+      {/* Hidden Video BG Input */}
+      <input 
+        type="file" 
+        ref={videoBgInputRef} 
+        onChange={handleVideoBgUpload} 
+        className="hidden" 
+        accept="video/*"
       />
 
       {/* Export Modal */}
@@ -1413,6 +1560,37 @@ export default function App() {
                 </div>
 
                 <div className="space-y-4">
+                  <div>
+                    <label className="text-xs text-gray-400 block mb-2 font-bold">Card Video Background</label>
+                    <div className="flex flex-col gap-2 mb-4">
+                      <button 
+                        onClick={() => videoBgInputRef.current?.click()}
+                        className={cn(
+                          "w-full flex items-center justify-center gap-2 font-bold py-3 rounded-xl transition-all shadow-lg active:scale-[0.98]",
+                          videoBackground 
+                            ? "bg-purple-600 hover:bg-purple-700 text-white" 
+                            : "bg-[#2a2d35] hover:bg-[#353941] text-gray-300 border border-[#353941]"
+                        )}
+                      >
+                        <Film size={16} /> {videoBackground ? 'CHANGE CARD VIDEO' : 'UPLOAD CARD VIDEO'}
+                      </button>
+                      {videoBackground && (
+                        <button 
+                          onClick={() => {
+                            setVideoBackground(null);
+                            if (previousBgStyle) {
+                              setBgStyle(previousBgStyle);
+                              setPreviousBgStyle(null);
+                            }
+                          }}
+                          className="w-full flex items-center justify-center gap-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 text-[10px] font-bold py-2 rounded-lg transition-all border border-red-500/20 uppercase"
+                        >
+                          <X size={14} /> Remove Card Video
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
                   <div className="flex items-center justify-between p-2 bg-[#2a2d35]/30 rounded-lg">
                     <div className="flex items-center gap-2">
                        <div 
@@ -1699,7 +1877,8 @@ function Poster({
   fontWeight, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
   showFooter, footerFont, footerBgStyle, footerBgColor, footerTextColor, 
   footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor,
-  bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly, hColor, removePaddingWhenHidden
+  bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly, hColor, removePaddingWhenHidden,
+  videoBackground, isExporting
 }: any) {
   const isCardPadded = showCard || !removePaddingWhenHidden;
 
@@ -1711,9 +1890,10 @@ function Poster({
         width: '1080px', 
         height: '1920px',
         background: fullImageOnly ? 'transparent' : (
+                    (isExporting && videoBackground) ? 'transparent' : (
                     bgStyle === 'solid' ? bgColor : 
                     bgStyle === 'gradient' ? `linear-gradient(to bottom, ${bgColor}, ${gradEnd})` : 
-                    '#000'),
+                    '#000')),
         transform: 'scale(0.33)',
         transformOrigin: 'top left',
         position: 'absolute',
@@ -1730,7 +1910,7 @@ function Poster({
         />
       ) : (
         <>
-          {bgStyle === 'image' && bgImage && (
+          {bgStyle === 'image' && bgImage && !(isExporting && videoBackground) && (
             <>
               <img 
                 src={bgImage} 
@@ -1743,6 +1923,23 @@ function Poster({
                 style={{ backgroundColor: `rgba(0,0,0,${bgImageOverlay / 100})` }}
               />
             </>
+          )}
+
+          {videoBackground && !isExporting && (
+            <div className="absolute inset-0 z-0 overflow-hidden">
+              <video 
+                src={videoBackground} 
+                autoPlay 
+                muted 
+                loop 
+                playsInline
+                className="absolute inset-0 w-full h-full object-cover"
+              />
+              <div 
+                className="absolute inset-0 z-10" 
+                style={{ backgroundColor: `rgba(0,0,0,${bgImageOverlay / 100})` }}
+              />
+            </div>
           )}
           {/* Design Elements */}
           {showDots && <div className="absolute inset-0 opacity-5 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 4px 4px, white 2px, transparent 0)', backgroundSize: '64px 64px' }}></div>}
