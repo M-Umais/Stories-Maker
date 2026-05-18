@@ -1224,7 +1224,8 @@ export default function App() {
                      className="w-full bg-[#2a2d35] border border-[#353941] rounded px-3 py-2 text-sm outline-none focus:border-blue-500"
                    >
                      <option value="none">None</option>
-                     <option value="blur">Blur</option>
+                     <option value="blur">Blur (all)</option>
+                     <option value="title-blur">Title Blur</option>
                      <option value="squiggle">Squiggle (wavy)</option>
                      <option value="solid">Solid bar</option>
                      <option value="mosaic">Mosaic</option>
@@ -1988,6 +1989,7 @@ function Poster({
                       nameFont, 
                       nameHasBg ? "bg-white/20 backdrop-blur-sm" : "",
                       scribbleStyle === 'blur' && "blur-xl scale-105",
+                      scribbleStyle === 'title-blur' && "blur-xl scale-105",
                       scribbleStyle === 'mosaic' && "contrast-150 brightness-110 blur-[2px] opacity-70"
                     )}
                     style={{ 
