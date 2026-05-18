@@ -405,9 +405,10 @@ export default function App() {
   const [profilePosition, setProfilePosition] = useState('outside');
   const [cardMove, setCardMove] = useState(0);
   const [footerMove, setFooterMove] = useState(0);
+  const [customHighlightColor, setCustomHighlightColor] = useState('#808080'); // Default grey like screenshot
   
   // Typography State
-  const [storyText, setStoryText] = useState('Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [Again?] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...');
+  const [storyText, setStoryText] = useState('Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [[Again?]] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...');
   const [highlightColor, setHighlightColor] = useState('#150621');
   const [textColor, setTextColor] = useState('#150621');
   const [fontFamily, setFontFamily] = useState('font-serif');
@@ -491,6 +492,7 @@ export default function App() {
     setProfilePosition('outside');
     setCardMove(0);
     setFooterMove(0);
+    setCustomHighlightColor('#808080');
     setFooterBgStyle('text');
     setFooterBgColor('#ffffff');
     setBgColor('#CEADE1');
@@ -770,21 +772,44 @@ export default function App() {
   };
 
   const renderStoryText = (text: string, hColor: string) => {
-    const parts = text.split(/(\[.*?\])/);
-    return parts.map((part, index) => {
-      if (part.startsWith('[') && part.endsWith(']')) {
-        const content = part.slice(1, -1);
+    // 1. Process custom highlights [[text]]
+    const parts0 = text.split(/(\[\[.*?\]\])/);
+    const elements0 = parts0.map((part, i) => {
+      if (part.startsWith('[[') && part.endsWith(']]')) {
+        const content = part.slice(2, -2);
         return (
           <span 
-            key={index} 
-            style={{ color: hColor }} 
-            className={cn("font-bold decoration-2 underline-offset-4", highlightUnderline ? "underline" : "")}
+            key={`custom-${i}`} 
+            style={{ backgroundColor: customHighlightColor }} 
+            className="px-2 py-0.5 rounded-sm mx-0.5 inline-block"
           >
             {content}
           </span>
         );
       }
       return part;
+    });
+
+    // 2. Process existing highlight brackets [text]
+    return elements0.map((el, i) => {
+      if (typeof el !== 'string') return el;
+      
+      const parts1 = el.split(/(\[.*?\])/);
+      return parts1.map((part, j) => {
+        if (part.startsWith('[') && part.endsWith(']')) {
+          const content = part.slice(1, -1);
+          return (
+            <span 
+              key={`h-${i}-${j}`} 
+              style={{ color: hColor }} 
+              className={cn("font-bold decoration-2 underline-offset-4", highlightUnderline ? "underline" : "")}
+            >
+              {content}
+            </span>
+          );
+        }
+        return part;
+      });
     });
   };
 
@@ -809,7 +834,7 @@ export default function App() {
 
   const posterProps = {
     bgStyle, bgColor, gradEnd, avatarBorder, avatarBorderColor, profileImage, 
-    scribbleStyle, profileMove, profilePosition, cardMove, footerMove, nameFont, nameHasBg, nameSize, nameColor, posterName, 
+    scribbleStyle, profileMove, profilePosition, cardMove, footerMove, customHighlightColor, nameFont, nameHasBg, nameSize, nameColor, posterName, 
     subFont, subtitleHasBg, subtitleSize, subtitleColor, subtitle, 
     cardColor, cardTransparency, cardRadius, cardPadding, fontFamily, 
     fontWeight, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
@@ -1343,6 +1368,10 @@ export default function App() {
                       <div className="flex-1">
                         <label className="text-xs text-gray-400 block mb-1">Highlight Color</label>
                         <input type="color" value={highlightColor} onChange={(e) => setHighlightColor(e.target.value)} className="w-full h-10 rounded border border-[#353941] cursor-pointer bg-transparent" />
+                      </div>
+                      <div className="flex-1">
+                        <label className="text-xs text-gray-400 block mb-1">Box Highlight</label>
+                        <input type="color" value={customHighlightColor} onChange={(e) => setCustomHighlightColor(e.target.value)} className="w-full h-10 rounded border border-[#353941] cursor-pointer bg-transparent" />
                       </div>
                       <div className="flex-1">
                         <label className="text-xs text-gray-400 block mb-1">Text Color</label>
@@ -2016,7 +2045,7 @@ export default function App() {
 // Sub-component for clean rendering
 function Poster({ 
   innerRef, storyText, bgStyle, bgColor, gradEnd, avatarBorder, avatarBorderColor,
-  profileImage, scribbleStyle, profileMove, profilePosition, cardMove, footerMove, nameFont, nameHasBg, nameSize, nameColor,
+  profileImage, scribbleStyle, profileMove, profilePosition, cardMove, footerMove, customHighlightColor, nameFont, nameHasBg, nameSize, nameColor,
   posterName, subFont, subtitleHasBg, subtitleSize, subtitleColor, subtitle,
   cardColor, cardTransparency, cardRadius, cardPadding, fontFamily, fSize,
   fontWeight, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
