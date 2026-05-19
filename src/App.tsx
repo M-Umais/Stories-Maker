@@ -403,7 +403,9 @@ export default function App() {
   // Profile State
   const [profileImage, setProfileImage] = useState('https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=400&h=400');
   const [posterName, setPosterName] = useState('Buried Bell');
-  const [subtitle, setSubtitle] = useState('Will It Ring Again?');
+  const [subtitle, setSubtitle] = useState('5h ago');
+  const [showPosterName, setShowPosterName] = useState(true);
+  const [showSubtitle, setShowSubtitle] = useState(true);
   const [nameSize, setNameSize] = useState(82);
   const [nameColor, setNameColor] = useState('#2D0D44');
   const [nameHasBg, setNameHasBg] = useState(false);
@@ -477,7 +479,9 @@ export default function App() {
     setExportDuration(31);
     setProfileImage('https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=400&h=400');
     setPosterName('Buried Bell');
-    setSubtitle('Will It Ring Again?');
+    setSubtitle('5h ago');
+    setShowPosterName(true);
+    setShowSubtitle(true);
     setStoryText('Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [Again?] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...');
     setBulkStories([
       {
@@ -537,7 +541,9 @@ export default function App() {
 
   const handleNewPoster = () => {
     setPosterName('');
-    setSubtitle('');
+    setSubtitle('5h ago');
+    setShowPosterName(true);
+    setShowSubtitle(true);
     setStoryText('');
     setFooterText('CONTINUE READING IN COMMENT');
     const randomPreset = TEMPLATE_PRESETS[Math.floor(Math.random() * TEMPLATE_PRESETS.length)];
@@ -884,7 +890,7 @@ export default function App() {
   const posterProps = {
     bgStyle, bgColor, gradEnd, avatarBorder, avatarBorderColor, profileImage, 
     scribbleStyle, profileMove, profilePosition, cardMove, footerMove, customHighlightColor, nameFont, nameHasBg, nameSize, nameColor, posterName, 
-    subFont, subtitleHasBg, subtitleSize, subtitleColor, subtitle, 
+    subFont, subtitleHasBg, subtitleSize, subtitleColor, subtitle, showPosterName, showSubtitle,
     cardColor, cardTransparency, cardRadius, cardPadding, fontFamily, 
     fontWeight, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
     showFooter, footerFont, footerBgStyle, footerBgColor, footerTextColor, 
@@ -1186,6 +1192,30 @@ export default function App() {
 
                 {/* Poster Name & Subtitle */}
                 <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3 mb-2">
+                    <div className="flex items-center justify-between p-3 bg-blue-500/5 rounded-xl border border-blue-500/10">
+                      <div className="flex flex-col">
+                        <span className="text-[10px] font-bold text-blue-400">Title View</span>
+                      </div>
+                      <div 
+                        onClick={() => setShowPosterName(!showPosterName)}
+                        className={cn("w-10 h-5 rounded-full relative cursor-pointer transition-colors", showPosterName ? "bg-blue-500" : "bg-[#2a2d35]")}
+                      >
+                        <div className={cn("absolute top-1 w-3 h-3 bg-white rounded-full transition-all", showPosterName ? "left-6" : "left-1")}></div>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between p-3 bg-blue-500/5 rounded-xl border border-blue-500/10">
+                      <div className="flex flex-col">
+                        <span className="text-[10px] font-bold text-blue-400">Sub-title View</span>
+                      </div>
+                      <div 
+                        onClick={() => setShowSubtitle(!showSubtitle)}
+                        className={cn("w-10 h-5 rounded-full relative cursor-pointer transition-colors", showSubtitle ? "bg-blue-500" : "bg-[#2a2d35]")}
+                      >
+                        <div className={cn("absolute top-1 w-3 h-3 bg-white rounded-full transition-all", showSubtitle ? "left-6" : "left-1")}></div>
+                      </div>
+                    </div>
+                  </div>
                   <div>
                     <div className="flex justify-between items-center mb-1">
                       <label className="text-xs text-gray-400">Poster Name / Title</label>
@@ -2152,7 +2182,7 @@ export default function App() {
 function Poster({ 
   innerRef, storyText, bgStyle, bgColor, gradEnd, avatarBorder, avatarBorderColor,
   profileImage, scribbleStyle, profileMove, profilePosition, cardMove, footerMove, customHighlightColor, nameFont, nameHasBg, nameSize, nameColor,
-  posterName, subFont, subtitleHasBg, subtitleSize, subtitleColor, subtitle,
+  posterName, subFont, subtitleHasBg, subtitleSize, subtitleColor, subtitle, showPosterName, showSubtitle,
   cardColor, cardTransparency, cardRadius, cardPadding, fontFamily, fSize,
   fontWeight, textColor, textAlign, lineHeight, letterSpacing, fontStyle, 
   showFooter, footerFont, footerBgStyle, footerBgColor, footerTextColor, 
@@ -2202,54 +2232,58 @@ function Poster({
         )}
       </div>
       <div className="flex flex-col justify-center">
-        <div className="relative rounded overflow-hidden flex flex-col items-start px-1">
-          <div 
-            className={cn(
-              "inline-block text-ellipsis overflow-hidden whitespace-nowrap max-w-[800px] transition-all duration-300", 
-              nameFont, 
-              nameHasBg ? "bg-white/20 backdrop-blur-sm" : "",
-              isBlur && "blur-xl scale-105",
-              scribbleStyle === 'mosaic' && "contrast-150 brightness-110 blur-[2px] opacity-70"
+        {showPosterName && (
+          <div className="relative rounded overflow-hidden flex flex-col items-start px-1">
+            <div 
+              className={cn(
+                "inline-block text-ellipsis overflow-hidden whitespace-nowrap max-w-[800px] transition-all duration-300", 
+                nameFont, 
+                nameHasBg ? "bg-white/20 backdrop-blur-sm" : "",
+                isBlur && "blur-xl scale-105",
+                scribbleStyle === 'mosaic' && "contrast-150 brightness-110 blur-[2px] opacity-70"
+              )}
+              style={{ 
+                fontSize: `${nameSize}px`, 
+                color: nameColor,
+                fontWeight: '800',
+                lineHeight: 1,
+                letterSpacing: '-1px'
+              }}
+            >
+              {posterName}
+            </div>
+
+            {/* Overlays for title ONLY */}
+            {scribbleStyle === 'solid' && (
+              <div className="absolute inset-0 bg-white/20 backdrop-blur-[2px] flex items-center justify-center pointer-events-none">
+                  <div className="w-full h-[40%] bg-blue-500/60 rotate-[-5deg] shadow-lg"></div>
+              </div>
             )}
+            {scribbleStyle === 'squiggle' && (
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <svg className="w-full h-full text-blue-500 opacity-60" viewBox="0 0 100 100" preserveAspectRatio="none">
+                      <path d="M 0 50 Q 25 30 50 50 T 100 50" fill="none" stroke="currentColor" strokeWidth="8" />
+                      <path d="M 0 25 Q 25 5 50 25 T 100 25" fill="none" stroke="currentColor" strokeWidth="8" />
+                  </svg>
+                </div>
+            )}
+          </div>
+        )}
+
+        {showSubtitle && (
+          <div 
+            className={cn("block mt-2 rounded px-1", subFont, subtitleHasBg ? "bg-white/20 backdrop-blur-sm" : "")}
             style={{ 
-              fontSize: `${nameSize}px`, 
-              color: nameColor,
-              fontWeight: '800',
+              fontSize: `${subtitleSize}px`, 
+              color: subtitleColor,
+              opacity: 0.9,
               lineHeight: 1,
-              letterSpacing: '-1px'
+              fontWeight: '500'
             }}
           >
-            {posterName}
+            {subtitle}
           </div>
-
-          {/* Overlays for title ONLY */}
-          {scribbleStyle === 'solid' && (
-            <div className="absolute inset-0 bg-white/20 backdrop-blur-[2px] flex items-center justify-center pointer-events-none">
-                <div className="w-full h-[40%] bg-blue-500/60 rotate-[-5deg] shadow-lg"></div>
-            </div>
-          )}
-          {scribbleStyle === 'squiggle' && (
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <svg className="w-full h-full text-blue-500 opacity-60" viewBox="0 0 100 100" preserveAspectRatio="none">
-                    <path d="M 0 50 Q 25 30 50 50 T 100 50" fill="none" stroke="currentColor" strokeWidth="8" />
-                    <path d="M 0 25 Q 25 5 50 25 T 100 25" fill="none" stroke="currentColor" strokeWidth="8" />
-                </svg>
-              </div>
-          )}
-        </div>
-
-        <div 
-          className={cn("block mt-2 rounded px-1", subFont, subtitleHasBg ? "bg-white/20 backdrop-blur-sm" : "")}
-          style={{ 
-            fontSize: `${subtitleSize}px`, 
-            color: subtitleColor,
-            opacity: 0.9,
-            lineHeight: 1,
-            fontWeight: '500'
-          }}
-        >
-          {subtitle}
-        </div>
+        )}
       </div>
     </div>
   );
