@@ -16,7 +16,8 @@ import {
   Film,
   Loader2,
   MoveRight,
-  Plus
+  Plus,
+  Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toPng, toCanvas } from 'html-to-image';
@@ -25,6 +26,7 @@ import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import { TEMPLATE_PRESETS, TemplatePreset } from './constants';
 
 import JSZip from 'jszip';
+import Papa from 'papaparse';
 
 type TabType = 'profile' | 'typography' | 'background' | 'footer';
 
@@ -378,13 +380,25 @@ export default function App() {
   
   // Bulk Mode State
   const [isBulkMode, setIsBulkMode] = useState(false);
-  const [bulkStories, setBulkStories] = useState<any[]>(
-    Array(10).fill(null).map((_, i) => ({
-      text: i === 0 ? 'Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [Again?] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...' : '',
+  const [bulkStories, setBulkStories] = useState<any[]>([
+    {
+      text: 'Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [Again?] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...',
       fontSize: 62,
       highlightColor: '#150621'
-    }))
-  );
+    }
+  ]);
+
+  const addBulkStory = () => {
+    setBulkStories(prev => [...prev, {
+      text: '',
+      fontSize: 62,
+      highlightColor: highlightColor
+    }]);
+  };
+
+  const removeBulkStory = (index: number) => {
+    setBulkStories(prev => prev.filter((_, i) => i !== index));
+  };
   
   // Profile State
   const [profileImage, setProfileImage] = useState('https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=400&h=400');
@@ -455,6 +469,7 @@ export default function App() {
   const bgFileInputRef = useRef<HTMLInputElement>(null);
   const videoBgInputRef = useRef<HTMLInputElement>(null);
   const fullImageInputRef = useRef<HTMLInputElement>(null);
+  const csvInputRef = useRef<HTMLInputElement>(null);
 
   const handleReset = () => {
     applyPreset(TEMPLATE_PRESETS[1].id);
@@ -464,11 +479,13 @@ export default function App() {
     setPosterName('Buried Bell');
     setSubtitle('Will It Ring Again?');
     setStoryText('Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [Again?] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...');
-    setBulkStories(Array(10).fill(null).map((_, i) => ({
-      text: i === 0 ? 'Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [Again?] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...' : '',
-      fontSize: 62,
-      highlightColor: '#150621'
-    })));
+    setBulkStories([
+      {
+        text: 'Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [Again?] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...',
+        fontSize: 62,
+        highlightColor: '#150621'
+      }
+    ]);
     setFooterText("CONTINUE READING IN COMMENT");
     setNameSize(82);
     setNameHasBg(false);
@@ -615,6 +632,38 @@ export default function App() {
       setVideoBackground(url);
       setBgStyle('image'); // Switch to image style to show media
     }
+  };
+
+  const handleCsvUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      Papa.parse(file, {
+        complete: (results) => {
+          const data = results.data as any[];
+          // Filter out empty rows and handle different possible CSV structures
+          const stories = data
+            .map(row => {
+              if (Array.isArray(row)) return row[0];
+              if (typeof row === 'object') return Object.values(row)[0];
+              return row;
+            })
+            .filter(text => text && text.toString().trim().length > 0);
+
+          if (stories.length > 0) {
+            const newStories = stories.map(storyText => ({
+              text: storyText.toString().trim(),
+              fontSize: 62,
+              highlightColor: highlightColor
+            }));
+            setBulkStories(newStories);
+          }
+        },
+        header: false,
+        skipEmptyLines: true
+      });
+    }
+    // Reset input so the same file can be uploaded again if needed
+    e.target.value = '';
   };
 
   const handleBulkDownload = useCallback(async () => {
@@ -880,6 +929,15 @@ export default function App() {
         onChange={handleVideoBgUpload} 
         className="hidden" 
         accept="video/*"
+      />
+
+      {/* Hidden CSV Input */}
+      <input 
+        type="file" 
+        ref={csvInputRef} 
+        onChange={handleCsvUpload} 
+        className="hidden" 
+        accept=".csv,text/csv"
       />
 
       {/* Export Modal */}
@@ -1398,7 +1456,7 @@ export default function App() {
                 <div className="flex items-center justify-between">
                   <div className="flex flex-col">
                     <span className="text-xs text-gray-400">Bulk Mode</span>
-                    <span className="text-[10px] text-gray-500">Create up to 10 stories</span>
+                    <span className="text-[10px] text-gray-500">Create multiple stories at once</span>
                   </div>
                   <div 
                     onClick={() => setIsBulkMode(!isBulkMode)}
@@ -1433,10 +1491,35 @@ export default function App() {
                   </div>
                 ) : (
                   <div className="space-y-8">
+                    {/* CSV Upload Button */}
+                    <div className="p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-center justify-between gap-4">
+                      <div className="flex-1">
+                        <h4 className="text-xs font-bold text-blue-400">Import from CSV</h4>
+                        <p className="text-[10px] text-gray-500">Upload a list of stories</p>
+                      </div>
+                      <button 
+                        onClick={() => csvInputRef.current?.click()}
+                        className="px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white text-[10px] font-bold rounded transition-colors flex items-center gap-1.5"
+                      >
+                        <Upload size={14} /> UPLOAD CSV
+                      </button>
+                    </div>
+
                     {bulkStories.map((story, index) => (
                       <div key={index} className="p-4 bg-[#1c2229] rounded-xl border border-[#2a2d35] space-y-4">
-                        <div className="flex items-center justify-between mb-2">
-                           <span className="text-[10px] font-black text-gray-600 tracking-[0.2em] uppercase">STORY #{index + 1}</span>
+                         <div className="flex items-center justify-between mb-2">
+                           <div className="flex items-center gap-3">
+                             <span className="text-[10px] font-black text-gray-600 tracking-[0.2em] uppercase">STORY #{index + 1}</span>
+                             {bulkStories.length > 1 && (
+                               <button 
+                                 onClick={() => removeBulkStory(index)}
+                                 className="text-gray-600 hover:text-red-400 transition-colors"
+                                 title="Remove Story"
+                               >
+                                 <Trash2 size={12} />
+                               </button>
+                             )}
+                           </div>
                            <button 
                               onClick={() => handleRandomHighlight(index)}
                               className="flex items-center gap-1 text-[10px] text-blue-400 font-bold hover:text-blue-300 transition-colors"
@@ -1497,6 +1580,13 @@ export default function App() {
                         </div>
                       </div>
                     ))}
+
+                    <button 
+                      onClick={addBulkStory}
+                      className="w-full py-4 border-2 border-dashed border-[#2a2d35] rounded-xl text-gray-500 hover:text-blue-400 hover:border-blue-500/50 hover:bg-blue-500/5 transition-all text-[10px] font-black tracking-widest flex items-center justify-center gap-2"
+                    >
+                      <Plus size={16} /> ADD NEW STORY
+                    </button>
                   </div>
                 )}
 
@@ -2006,28 +2096,44 @@ export default function App() {
               </div>
             </div>
           ) : (
-            bulkStories.filter(s => s.text.trim().length > 0).map((story, index) => (
-              <div key={index} className="flex flex-col items-center gap-4">
-                <div className="flex items-center gap-3 self-start">
-                   <div className="px-3 py-1 bg-[#1a1d23] border border-[#2a2d35] rounded-full text-[10px] font-bold text-blue-400 uppercase tracking-widest">
-                    CARD #{index + 1}
+            bulkStories.map((story, originalIndex) => {
+              if (story.text.trim().length === 0) return null;
+              
+              // Calculate display index for the badge
+              const displayIndex = bulkStories.slice(0, originalIndex).filter(s => s.text.trim().length > 0).length;
+
+              return (
+                <div key={originalIndex} className="flex flex-col items-center gap-4 group/card">
+                  <div className="flex items-center gap-3 self-start w-[356px]">
+                    <div className="flex items-center gap-2">
+                       <div className="px-3 py-1 bg-[#1a1d23] border border-[#2a2d35] rounded-full text-[10px] font-bold text-blue-400 uppercase tracking-widest">
+                        CARD #{displayIndex + 1}
+                      </div>
+                      <button 
+                        onClick={() => removeBulkStory(originalIndex)}
+                        className="p-1.5 text-gray-600 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-all opacity-0 group-hover/card:opacity-100"
+                        title="Remove Card"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                    <div className="h-px flex-1 bg-gradient-to-r from-[#2a2d35] to-transparent" />
                   </div>
-                  <div className="h-px w-32 bg-gradient-to-r from-[#2a2d35] to-transparent" />
+                  <div 
+                    className="relative overflow-visible shadow-[0_40px_100px_-20px_rgba(0,0,0,0.5)] rounded-2xl bulk-poster-card transition-transform duration-300 group-hover/card:scale-[1.01]" 
+                    style={{ width: '356px', height: '633px' }}
+                  >
+                    <Poster 
+                      {...posterProps} 
+                      storyText={story.text} 
+                      hColor={story.highlightColor}
+                      fSize={story.fontSize}
+                      innerRef={originalIndex === 0 ? previewRef : null} 
+                    />
+                  </div>
                 </div>
-                <div 
-                  className="relative overflow-visible shadow-[0_40px_100px_-20px_rgba(0,0,0,0.5)] rounded-2xl bulk-poster-card" 
-                  style={{ width: '356px', height: '633px' }}
-                >
-                  <Poster 
-                    {...posterProps} 
-                    storyText={story.text} 
-                    hColor={story.highlightColor}
-                    fSize={story.fontSize}
-                    innerRef={index === 0 ? previewRef : null} 
-                  />
-                </div>
-              </div>
-            ))
+              );
+            })
           )}
           
           {isBulkMode && bulkStories.every(s => s.text.trim().length === 0) && (
