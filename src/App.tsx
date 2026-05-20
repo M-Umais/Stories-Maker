@@ -1271,8 +1271,14 @@ export default function App() {
                     <div className="flex-1">
                       <label className="text-xs text-gray-400 block mb-1">Name Color</label>
                       <div className="flex items-center gap-2">
-                        <input type="color" value={nameColor} onChange={(e) => setNameColor(e.target.value)} className="w-8 h-8 rounded border-none cursor-pointer bg-transparent" />
-                        <div className="w-full h-8 rounded border border-[#353941]" style={{ backgroundColor: nameColor }}></div>
+                        <input type="color" value={nameColor} onChange={(e) => setNameColor(e.target.value)} className="w-8 h-8 rounded border-none cursor-pointer bg-transparent flex-shrink-0" />
+                        <input 
+                          type="text" 
+                          value={nameColor} 
+                          onChange={(e) => setNameColor(e.target.value)} 
+                          className="w-full bg-[#1a1d23] border border-[#353941] rounded px-2 py-1 text-[10px] font-mono outline-none focus:border-blue-500" 
+                          placeholder="#000"
+                        />
                       </div>
                     </div>
                     <div className="flex-1">
@@ -1320,8 +1326,14 @@ export default function App() {
                     <div className="flex-1">
                       <label className="text-xs text-gray-400 block mb-1">Sub Color</label>
                       <div className="flex items-center gap-2">
-                        <input type="color" value={subtitleColor} onChange={(e) => setSubtitleColor(e.target.value)} className="w-8 h-8 rounded border-none cursor-pointer bg-transparent" />
-                        <div className="w-full h-8 rounded border border-[#353941]" style={{ backgroundColor: subtitleColor }}></div>
+                        <input type="color" value={subtitleColor} onChange={(e) => setSubtitleColor(e.target.value)} className="w-8 h-8 rounded border-none cursor-pointer bg-transparent flex-shrink-0" />
+                        <input 
+                          type="text" 
+                          value={subtitleColor} 
+                          onChange={(e) => setSubtitleColor(e.target.value)} 
+                          className="w-full bg-[#1a1d23] border border-[#353941] rounded px-2 py-1 text-[10px] font-mono outline-none focus:border-blue-500" 
+                          placeholder="#000"
+                        />
                       </div>
                     </div>
                     <div className="flex-1">
@@ -1354,7 +1366,16 @@ export default function App() {
                       </div>
                       <span className="text-xs text-gray-400">Avatar Border</span>
                     </div>
-                    <input type="color" value={avatarBorderColor} onChange={(e) => setAvatarBorderColor(e.target.value)} className="w-8 h-8 rounded-lg cursor-pointer bg-transparent border border-[#353941]" />
+                    <div className="flex items-center gap-2">
+                      <input type="color" value={avatarBorderColor} onChange={(e) => setAvatarBorderColor(e.target.value)} className="w-8 h-8 rounded-lg cursor-pointer bg-transparent border border-[#353941]" />
+                      <input 
+                        type="text" 
+                        value={avatarBorderColor} 
+                        onChange={(e) => setAvatarBorderColor(e.target.value)} 
+                        className="w-20 bg-[#1a1d23] border border-[#353941] rounded px-2 py-1 text-[10px] font-mono outline-none focus:border-blue-500" 
+                        placeholder="#fff"
+                      />
+                    </div>
                   </div>
                 </div>
 
@@ -1452,18 +1473,50 @@ export default function App() {
               >
                 {!isBulkMode && (
                   <>
-                    <div className="flex gap-4">
-                      <div className="flex-1">
-                        <label className="text-xs text-gray-400 block mb-1">Highlight Color</label>
-                        <input type="color" value={highlightColor} onChange={(e) => setHighlightColor(e.target.value)} className="w-full h-10 rounded border border-[#353941] cursor-pointer bg-transparent" />
+                    <div className="space-y-4">
+                      <div className="p-3 bg-[#2a2d35]/30 rounded-xl border border-[#2a2d35] space-y-2">
+                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block">Text Highlight Style</label>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-gray-500">Highlight</label>
+                            <div className="flex items-center gap-2">
+                              <input type="color" value={highlightColor} onChange={(e) => setHighlightColor(e.target.value)} className="w-8 h-8 rounded border-none cursor-pointer bg-transparent" />
+                              <input 
+                                type="text" 
+                                value={highlightColor} 
+                                onChange={(e) => setHighlightColor(e.target.value)} 
+                                className="w-full bg-[#1a1d23] border border-[#353941] rounded px-2 py-1 text-[10px] font-mono outline-none focus:border-blue-500" 
+                                placeholder="#000"
+                              />
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-gray-500">Box Background</label>
+                            <div className="flex items-center gap-2">
+                              <input type="color" value={customHighlightColor} onChange={(e) => setCustomHighlightColor(e.target.value)} className="w-8 h-8 rounded border-none cursor-pointer bg-transparent" />
+                              <input 
+                                type="text" 
+                                value={customHighlightColor} 
+                                onChange={(e) => setCustomHighlightColor(e.target.value)} 
+                                className="w-full bg-[#1a1d23] border border-[#353941] rounded px-2 py-1 text-[10px] font-mono outline-none focus:border-blue-500" 
+                                placeholder="#000"
+                              />
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex-1">
-                        <label className="text-xs text-gray-400 block mb-1">Box Highlight</label>
-                        <input type="color" value={customHighlightColor} onChange={(e) => setCustomHighlightColor(e.target.value)} className="w-full h-10 rounded border border-[#353941] cursor-pointer bg-transparent" />
-                      </div>
-                      <div className="flex-1">
-                        <label className="text-xs text-gray-400 block mb-1">Text Color</label>
-                        <input type="color" value={textColor} onChange={(e) => setTextColor(e.target.value)} className="w-full h-10 rounded border border-[#353941] cursor-pointer bg-transparent" />
+                      <div className="p-3 bg-[#2a2d35]/30 rounded-xl border border-[#2a2d35] space-y-2">
+                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block">Default Text Color</label>
+                        <div className="flex items-center gap-3">
+                          <input type="color" value={textColor} onChange={(e) => setTextColor(e.target.value)} className="w-10 h-10 rounded-lg border border-[#353941] cursor-pointer bg-transparent flex-shrink-0" />
+                          <input 
+                            type="text" 
+                            value={textColor} 
+                            onChange={(e) => setTextColor(e.target.value)} 
+                            className="flex-1 bg-[#1a1d23] border border-[#353941] rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-blue-500" 
+                            placeholder="#000000"
+                          />
+                        </div>
                       </div>
                     </div>
 
@@ -1591,7 +1644,7 @@ export default function App() {
                           </div>
                           <div>
                             <label className="text-[10px] text-gray-500 block mb-1">Highlight</label>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 text-left">
                               <input 
                                 type="color" 
                                 value={story.highlightColor} 
@@ -1600,11 +1653,19 @@ export default function App() {
                                   newBulk[index].highlightColor = e.target.value;
                                   setBulkStories(newBulk);
                                 }} 
-                                className="w-6 h-6 rounded cursor-pointer bg-transparent border-none" 
+                                className="w-6 h-6 rounded cursor-pointer bg-transparent border-none p-0 flex-shrink-0" 
                               />
-                              <div className="flex-1 h-6 rounded bg-[#14161b] border border-[#2a2d35] relative overflow-hidden">
-                                <div className="absolute inset-0" style={{ backgroundColor: story.highlightColor }} />
-                              </div>
+                              <input 
+                                type="text" 
+                                value={story.highlightColor} 
+                                onChange={(e) => {
+                                  const newBulk = [...bulkStories];
+                                  newBulk[index].highlightColor = e.target.value;
+                                  setBulkStories(newBulk);
+                                }} 
+                                className="flex-1 bg-[#14161b] border border-[#2a2d35] rounded px-2 py-1 text-[10px] font-mono outline-none focus:border-blue-500" 
+                                placeholder="#000"
+                              />
                             </div>
                           </div>
                         </div>
@@ -1793,19 +1854,51 @@ export default function App() {
                   </div>
                 )}
 
-                <div className="flex gap-4">
-                  <div className="flex-1">
-                    <label className="text-xs text-gray-400 block mb-1">BG</label>
-                    <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)} className="w-full h-10 rounded border border-[#353941] cursor-pointer bg-transparent" />
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="p-3 bg-[#2a2d35]/30 rounded-xl border border-[#2a2d35] space-y-2">
+                       <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block">Background Color</label>
+                       <div className="flex items-center gap-2">
+                         <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)} className="w-10 h-10 rounded-lg border border-[#353941] cursor-pointer bg-transparent flex-shrink-0" />
+                         <input 
+                           type="text" 
+                           value={bgColor} 
+                           onChange={(e) => setBgColor(e.target.value)} 
+                           className="flex-1 bg-[#1a1d23] border border-[#353941] rounded-lg px-2 py-2 text-xs font-mono outline-none focus:border-blue-500" 
+                           placeholder="#000000"
+                         />
+                       </div>
+                    </div>
+                    <div className="p-3 bg-[#2a2d35]/30 rounded-xl border border-[#2a2d35] space-y-2">
+                       <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block">Card Color</label>
+                       <div className="flex items-center gap-2">
+                         <input type="color" value={cardColor} onChange={(e) => setCardColor(e.target.value)} className="w-10 h-10 rounded-lg border border-[#353941] cursor-pointer bg-transparent flex-shrink-0" />
+                         <input 
+                           type="text" 
+                           value={cardColor} 
+                           onChange={(e) => setCardColor(e.target.value)} 
+                           className="flex-1 bg-[#1a1d23] border border-[#353941] rounded-lg px-2 py-2 text-xs font-mono outline-none focus:border-blue-500" 
+                           placeholder="#000000"
+                         />
+                       </div>
+                    </div>
                   </div>
-                  <div className="flex-1">
-                    <label className="text-xs text-gray-400 block mb-1">Card</label>
-                    <input type="color" value={cardColor} onChange={(e) => setCardColor(e.target.value)} className="w-full h-10 rounded border border-[#353941] cursor-pointer bg-transparent" />
-                  </div>
-                  <div className="flex-1">
-                    <label className="text-xs text-gray-400 block mb-1">Grad. End</label>
-                    <input type="color" value={gradEnd} onChange={(e) => setGradEnd(e.target.value)} className="w-full h-10 rounded border border-[#353941] cursor-pointer bg-transparent" disabled={bgStyle === 'solid'} />
-                  </div>
+                  {bgStyle === 'gradient' && (
+                    <div className="p-3 bg-[#2a2d35]/30 rounded-xl border border-[#2a2d35] space-y-2 animate-in fade-in slide-in-from-top-2 duration-300">
+                       <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block">Gradient End</label>
+                       <div className="flex items-center gap-4">
+                         <input type="color" value={gradEnd} onChange={(e) => setGradEnd(e.target.value)} className="w-12 h-12 rounded-xl border border-[#353941] cursor-pointer bg-transparent flex-shrink-0" />
+                         <input 
+                           type="text" 
+                           value={gradEnd} 
+                           onChange={(e) => setGradEnd(e.target.value)} 
+                           className="w-full bg-[#1a1d23] border border-[#353941] rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-blue-500" 
+                           placeholder="#000000"
+                         />
+                         <div className="flex-1 h-px bg-[#353941]" />
+                       </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="text-center font-bold text-[10px] text-gray-600 tracking-widest border-t border-b border-[#2a2d35] py-2 uppercase">
@@ -2013,13 +2106,31 @@ export default function App() {
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
-                  <div>
+                  <div className="space-y-1">
                     <label className="text-xs text-gray-400 block mb-1">Footer BG Color</label>
-                    <input type="color" value={footerBgColor === 'transparent' ? '#000000' : footerBgColor} onChange={(e) => setFooterBgColor(e.target.value)} className="w-full h-10 rounded border border-[#353941] cursor-pointer bg-transparent" />
+                    <div className="flex items-center gap-2">
+                      <input type="color" value={footerBgColor === 'transparent' ? '#000000' : footerBgColor} onChange={(e) => setFooterBgColor(e.target.value)} className="w-8 h-8 rounded border border-[#353941] cursor-pointer bg-transparent flex-shrink-0" />
+                      <input 
+                        type="text" 
+                        value={footerBgColor === 'transparent' ? 'transparent' : footerBgColor} 
+                        onChange={(e) => setFooterBgColor(e.target.value)} 
+                        className="w-full bg-[#2a2d35] border border-[#353941] rounded px-2 py-1.5 text-[10px] font-mono outline-none focus:border-blue-500" 
+                        placeholder="#000"
+                      />
+                    </div>
                   </div>
-                  <div>
+                  <div className="space-y-1">
                     <label className="text-xs text-gray-400 block mb-1">Footer Text Color</label>
-                    <input type="color" value={footerTextColor} onChange={(e) => setFooterTextColor(e.target.value)} className="w-full h-10 rounded border border-[#353941] cursor-pointer bg-transparent" />
+                    <div className="flex items-center gap-2">
+                      <input type="color" value={footerTextColor} onChange={(e) => setFooterTextColor(e.target.value)} className="w-8 h-8 rounded border border-[#353941] cursor-pointer bg-transparent flex-shrink-0" />
+                      <input 
+                        type="text" 
+                        value={footerTextColor} 
+                        onChange={(e) => setFooterTextColor(e.target.value)} 
+                        className="w-full bg-[#2a2d35] border border-[#353941] rounded px-2 py-1.5 text-[10px] font-mono outline-none focus:border-blue-500" 
+                        placeholder="#fff"
+                      />
+                    </div>
                   </div>
                 </div>
 
@@ -2061,7 +2172,16 @@ export default function App() {
                   </div>
                   <div>
                     <label className="text-xs text-gray-400 block mb-1">Border Color</label>
-                    <input type="color" value={footerBorderColor} onChange={(e) => setFooterBorderColor(e.target.value)} className="w-full h-10 rounded border border-[#353941] cursor-pointer bg-transparent" />
+                    <div className="flex items-center gap-2">
+                      <input type="color" value={footerBorderColor} onChange={(e) => setFooterBorderColor(e.target.value)} className="w-8 h-8 rounded border border-[#353941] cursor-pointer bg-transparent flex-shrink-0" />
+                      <input 
+                        type="text" 
+                        value={footerBorderColor} 
+                        onChange={(e) => setFooterBorderColor(e.target.value)} 
+                        className="w-full bg-[#2a2d35] border border-[#353941] rounded px-2 py-1.5 text-[10px] font-mono outline-none focus:border-blue-500" 
+                        placeholder="#fff"
+                      />
+                    </div>
                   </div>
                 </div>
 
