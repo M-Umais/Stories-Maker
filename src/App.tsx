@@ -435,6 +435,7 @@ export default function App() {
   const [lineHeight, setLineHeight] = useState(1.25);
   const [letterSpacing, setLetterSpacing] = useState(0);
   const [highlightUnderline, setHighlightUnderline] = useState(false);
+  const [boldParagraphIndex, setBoldParagraphIndex] = useState<number | null>(null);
 
   // Background State
   const [bgStyle, setBgStyle] = useState<'solid' | 'gradient' | 'image'>('solid');
@@ -483,6 +484,7 @@ export default function App() {
     setShowPosterName(true);
     setShowSubtitle(true);
     setStoryText('Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [Again?] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...');
+    setBoldParagraphIndex(null);
     setBulkStories([
       {
         text: 'Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [Again?] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...',
@@ -545,6 +547,7 @@ export default function App() {
     setShowPosterName(true);
     setShowSubtitle(true);
     setStoryText('');
+    setBoldParagraphIndex(null);
     setFooterText('CONTINUE READING IN COMMENT');
     const randomPreset = TEMPLATE_PRESETS[Math.floor(Math.random() * TEMPLATE_PRESETS.length)];
     applyPreset(randomPreset.id);
@@ -896,7 +899,7 @@ export default function App() {
     showFooter, footerFont, footerBgStyle, footerBgColor, footerTextColor, 
     footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor,
     bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly, removePaddingWhenHidden,
-    videoBackground, isExporting
+    videoBackground, isExporting, boldParagraphIndex
   };
 
   return (
@@ -1571,6 +1574,32 @@ export default function App() {
                       placeholder="Type your story here."
                       className="w-full bg-[#2a2d35] border border-[#353941] rounded px-3 py-2 text-sm outline-none focus:border-blue-500 resize-none"
                     />
+
+                    {/* Bold Specific Paragraph Selector */}
+                    <div className="mt-3 p-3 bg-[#2a2d35]/30 rounded-xl border border-[#2a2d35] space-y-2">
+                      <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block">Bold Paragraph Only</label>
+                      <select 
+                        value={boldParagraphIndex === null ? 'none' : boldParagraphIndex}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setBoldParagraphIndex(val === 'none' ? null : parseInt(val));
+                        }}
+                        className="w-full bg-[#1a1d23] border border-[#353941] rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 text-gray-300"
+                      >
+                        <option value="none">None (Regular Weight)</option>
+                        {storyText.split('\n').map((para, idx) => {
+                          const cleanPara = para.trim();
+                          const displayNum = idx + 1;
+                          const previewText = cleanPara.length > 30 ? cleanPara.substring(0, 30) + '...' : cleanPara;
+                          return (
+                            <option key={idx} value={idx}>
+                              Paragraph {displayNum}: {cleanPara.length > 0 ? previewText : '(Empty Line)'}
+                            </option>
+                          );
+                        })}
+                      </select>
+                      <p className="text-[9px] text-gray-500 italic font-medium">Bolds a selected paragraph only, leaving others unaffected</p>
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-8">
@@ -2308,7 +2337,7 @@ function Poster({
   showFooter, footerFont, footerBgStyle, footerBgColor, footerTextColor, 
   footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor,
   bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly, hColor, removePaddingWhenHidden,
-  videoBackground, isExporting
+  videoBackground, isExporting, boldParagraphIndex
 }: any) {
   const isCardPadded = showCard || !removePaddingWhenHidden;
   const isBlur = scribbleStyle === 'blur' || scribbleStyle === 'title-blur';
@@ -2507,10 +2536,22 @@ function Poster({
                   letterSpacing: `${letterSpacing}px`,
                   fontWeight: fontWeight,
                   fontStyle: fontStyle === 'italic' ? 'italic' : 'normal',
-                  whiteSpace: 'pre-wrap',
                 }}
               >
-                {renderStoryText(storyText, hColor)}
+                {storyText.split('\n').map((para, index) => {
+                  const isBold = index === boldParagraphIndex;
+                  return (
+                    <div 
+                      key={index}
+                      style={{
+                        fontWeight: isBold ? '800' : undefined,
+                        whiteSpace: 'pre-wrap'
+                      }}
+                    >
+                      {para === '' ? <br /> : renderStoryText(para, hColor)}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
