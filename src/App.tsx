@@ -30,19 +30,41 @@ import Papa from 'papaparse';
 
 type TabType = 'profile' | 'typography' | 'background' | 'footer';
 
-// Helper to highlight random words
+// Helper to highlight random words while keeping double-bracket [[box backgrounds]] completely intact
 const getRandomHighlights = (text: string) => {
-  const parts = text.split(/(\s+)/);
+  const segments = text.split(/(\[\[.*?\]\])/).map(part => ({
+    text: part,
+    isBox: part.startsWith('[[') && part.endsWith(']]')
+  }));
+
+  interface FlatPart {
+    text: string;
+    isWord: boolean;
+  }
+
+  const flatParts: FlatPart[] = [];
+  segments.forEach(seg => {
+    if (seg.isBox) {
+      flatParts.push({ text: seg.text, isWord: false });
+    } else {
+      const subParts = seg.text.split(/(\s+)/);
+      subParts.forEach(part => {
+        const isWord = part.trim().length > 0;
+        flatParts.push({ text: part, isWord });
+      });
+    }
+  });
+
   const wordIndices: number[] = [];
-  
-  parts.forEach((part, i) => {
-    // If it's not pure whitespace, it's a word
-    if (part.trim().length > 0) {
+  flatParts.forEach((part, i) => {
+    if (part.isWord) {
       wordIndices.push(i);
     }
   });
 
-  if (wordIndices.length < 3) return text;
+  if (wordIndices.length < 3) {
+    return flatParts.map(p => p.text).join('');
+  }
   
   // Pick about 15-20% of words for highlighting, capping at exactly 8 max
   const targetCount = Math.min(8, Math.max(3, Math.floor(wordIndices.length * 0.15)));
@@ -56,7 +78,7 @@ const getRandomHighlights = (text: string) => {
     attempts++;
   }
   
-  return parts.map((part, i) => highlightIndices.has(i) ? `[${part}]` : part).join('');
+  return flatParts.map((part, i) => highlightIndices.has(i) ? `[${part.text}]` : part.text).join('');
 };
 
 export default function App() {
@@ -820,11 +842,26 @@ export default function App() {
   const handleRandomHighlight = (index?: number) => {
     if (isBulkMode && typeof index === 'number') {
       const newBulk = [...bulkStories];
-      const cleanText = newBulk[index].text.replace(/\[|\]/g, '');
+      const rawText = newBulk[index].text;
+      const parts = rawText.split(/(\[\[.*?\]\])/);
+      const cleanedParts = parts.map(part => {
+        if (part.startsWith('[[') && part.endsWith(']]')) {
+          return part;
+        }
+        return part.replace(/[\[\]]/g, '');
+      });
+      const cleanText = cleanedParts.join('');
       newBulk[index].text = getRandomHighlights(cleanText);
       setBulkStories(newBulk);
     } else {
-      const cleanText = storyText.replace(/\[|\]/g, '');
+      const parts = storyText.split(/(\[\[.*?\]\])/);
+      const cleanedParts = parts.map(part => {
+        if (part.startsWith('[[') && part.endsWith(']]')) {
+          return part;
+        }
+        return part.replace(/[\[\]]/g, '');
+      });
+      const cleanText = cleanedParts.join('');
       setStoryText(getRandomHighlights(cleanText));
     }
   };
