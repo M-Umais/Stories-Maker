@@ -18,7 +18,10 @@ import {
   MoveRight,
   Plus,
   Trash2,
-  FileImage
+  FileImage,
+  Music,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toPng, toCanvas } from 'html-to-image';
@@ -149,6 +152,11 @@ export default function App() {
         width,
         height
       },
+      audio: uploadedMusicBuffer ? {
+        codec: 'aac',
+        numberOfChannels: uploadedMusicBuffer.numberOfChannels,
+        sampleRate: uploadedMusicBuffer.sampleRate
+      } : undefined,
       fastStart: 'in-memory'
     });
 
@@ -289,6 +297,62 @@ export default function App() {
 
     await encoder.flush();
     encoder.close(); // Close the encoder after we are done
+
+    // Encode audio if uploaded
+    let audioEncoderError: Error | null = null;
+    let audioEncoder: AudioEncoder | null = null;
+    if (uploadedMusicBuffer) {
+      audioEncoder = new AudioEncoder({
+        output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+        error: (e) => {
+          console.error('AudioEncoder error:', e);
+          audioEncoderError = e;
+        }
+      });
+
+      audioEncoder.configure({
+        codec: 'mp4a.40.2',
+        numberOfChannels: uploadedMusicBuffer.numberOfChannels,
+        sampleRate: uploadedMusicBuffer.sampleRate,
+        bitrate: 128000
+      });
+
+      const sampleRate = uploadedMusicBuffer.sampleRate;
+      const numberOfChannels = uploadedMusicBuffer.numberOfChannels;
+      const chunkFrames = 1024;
+      const totalSamples = Math.floor(duration * sampleRate);
+
+      for (let offset = 0; offset < totalSamples; offset += chunkFrames) {
+        if (audioEncoderError) throw audioEncoderError;
+        const currentChunkSize = Math.min(chunkFrames, totalSamples - offset);
+        const chunkData = new Float32Array(currentChunkSize * numberOfChannels);
+        
+        for (let channel = 0; channel < numberOfChannels; channel++) {
+          const channelData = uploadedMusicBuffer.getChannelData(channel);
+          for (let i = 0; i < currentChunkSize; i++) {
+            const sourceIndex = (offset + i) % channelData.length;
+            chunkData[channel * currentChunkSize + i] = channelData[sourceIndex];
+          }
+        }
+
+        const timestamp = Math.floor((offset / sampleRate) * 1000000); // microseconds
+        const audioData = new AudioData({
+          format: 'f32-planar',
+          sampleRate: sampleRate,
+          numberOfFrames: currentChunkSize,
+          numberOfChannels: numberOfChannels,
+          timestamp: timestamp,
+          data: chunkData
+        });
+
+        audioEncoder.encode(audioData);
+        audioData.close();
+      }
+
+      await audioEncoder.flush();
+      audioEncoder.close();
+    }
+
     muxer.finalize();
     
     // Convert ArrayBuffer to Blob
@@ -330,7 +394,29 @@ export default function App() {
         await new Promise((r) => { video!.onloadeddata = r; });
       }
 
+      let audio: HTMLAudioElement | null = null;
       const stream = offscreen.captureStream(30);
+
+      if (uploadedMusicUrl) {
+        audio = document.createElement('audio');
+        audio.src = uploadedMusicUrl;
+        audio.crossOrigin = 'anonymous';
+        audio.loop = true;
+        audio.volume = 1.0;
+        try {
+          audio.play().catch(e => console.log('Autoplay blocked in media recorder:', e));
+          const audioStream = (audio as any).captureStream ? (audio as any).captureStream() : (audio as any).mozCaptureStream ? (audio as any).mozCaptureStream() : null;
+          if (audioStream) {
+            const audioTrack = audioStream.getAudioTracks()[0];
+            if (audioTrack) {
+              stream.addTrack(audioTrack);
+            }
+          }
+        } catch (e) {
+          console.error("Failed to attach audio track to media recorder fallback:", e);
+        }
+      }
+
       const mimeType = getSupportedMimeType();
       const mediaRecorder = new MediaRecorder(stream, { 
         mimeType,
@@ -343,6 +429,10 @@ export default function App() {
       };
 
       mediaRecorder.onstop = () => {
+        if (audio) {
+          audio.pause();
+          audio.remove();
+        }
         resolve(new Blob(chunks, { type: mimeType }));
       };
 
@@ -508,6 +598,17 @@ export default function App() {
   const [videoBackground, setVideoBackground] = useState<string | null>(null);
   const [previousBgStyle, setPreviousBgStyle] = useState<'solid' | 'gradient' | 'image' | null>(null);
 
+  // Music State
+  const [uploadedMusicFile, setUploadedMusicFile] = useState<File | null>(null);
+  const [uploadedMusicUrl, setUploadedMusicUrl] = useState<string | null>(null);
+  const [uploadedMusicBuffer, setUploadedMusicBuffer] = useState<AudioBuffer | null>(null);
+  const [isMusicMuted, setIsMusicMuted] = useState<boolean>(false);
+  const [isMusicDecoding, setIsMusicDecoding] = useState<boolean>(false);
+
+  // Music Input Ref and Audio Playback Tag Ref
+  const musicFileInputRef = useRef<HTMLInputElement>(null);
+  const audioElementRef = useRef<HTMLAudioElement | null>(null);
+
   // Footer State
   const [showFooter, setShowFooter] = useState(true);
   const [footerText, setFooterText] = useState("CONTINUE READING IN COMMENT");
@@ -521,6 +622,18 @@ export default function App() {
 
   const previewRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (audioElementRef.current) {
+      if (uploadedMusicUrl && !isMusicMuted && !isExporting) {
+        audioElementRef.current.play().catch(err => {
+          console.log('Autoplay blocked. Pressing play after click will work.', err);
+        });
+      } else {
+        audioElementRef.current.pause();
+      }
+    }
+  }, [uploadedMusicUrl, isMusicMuted, isExporting]);
 
   const bgFileInputRef = useRef<HTMLInputElement>(null);
   const videoBgInputRef = useRef<HTMLInputElement>(null);
@@ -714,6 +827,28 @@ export default function App() {
       }
       setVideoBackground(url);
       setBgStyle('image'); // Switch to image style to show media
+    }
+  };
+
+  const handleMusicUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setUploadedMusicFile(file);
+      setIsMusicDecoding(true);
+      const url = URL.createObjectURL(file);
+      setUploadedMusicUrl(url);
+      
+      // Decode audio data for MP4 WebCodecs exports
+      try {
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const arrayBuffer = await file.arrayBuffer();
+        const decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+        setUploadedMusicBuffer(decodedBuffer);
+      } catch (err) {
+        console.error("Failed to decode uploaded background music audio:", err);
+      } finally {
+        setIsMusicDecoding(false);
+      }
     }
   };
 
@@ -1157,6 +1292,17 @@ export default function App() {
         className="hidden" 
         accept="video/*"
       />
+
+      {/* Background Music Audio Element */}
+      {uploadedMusicUrl && (
+        <audio 
+          ref={audioElementRef}
+          src={uploadedMusicUrl} 
+          loop 
+          muted={isMusicMuted || isExporting}
+          style={{ display: 'none' }}
+        />
+      )}
 
       {/* Hidden CSV Input */}
       <input 
@@ -2470,6 +2616,98 @@ export default function App() {
                       >
                         <div className={cn("absolute top-1 w-3 h-3 bg-white rounded-full transition-all", showDots ? "left-6" : "left-1")}></div>
                       </div>
+                    </div>
+                  </div>
+
+                  {/* Background Music Option */}
+                  <div className="pt-4 border-t border-[#2a2d35] space-y-4">
+                    <div>
+                      <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block mb-2">Background Music</label>
+                      <input 
+                        type="file" 
+                        ref={musicFileInputRef} 
+                        onChange={handleMusicUpload} 
+                        accept="audio/*, video/mp4, video/*" 
+                        className="hidden" 
+                      />
+                      <div className="flex flex-col gap-2">
+                        <button 
+                          onClick={() => musicFileInputRef.current?.click()}
+                          disabled={isMusicDecoding}
+                          className={cn(
+                            "w-full flex items-center justify-center gap-2 font-bold py-3 rounded-xl transition-all shadow-lg active:scale-[0.98]",
+                            isMusicDecoding
+                              ? "bg-amber-600 text-white animate-pulse"
+                              : uploadedMusicUrl 
+                                ? "bg-emerald-600 hover:bg-emerald-700 text-white" 
+                                : "bg-[#2a2d35] hover:bg-[#353941] text-gray-300 border border-[#353941]"
+                          )}
+                        >
+                          <Music size={16} className={cn(isMusicDecoding && "animate-spin")} /> 
+                          {isMusicDecoding 
+                            ? 'EXTRACTING AUDIO...' 
+                            : uploadedMusicUrl 
+                              ? 'CHANGE BACKGROUND MUSIC' 
+                              : 'ADD BACKGROUND MUSIC (MP3/MP4)'}
+                        </button>
+                        {uploadedMusicUrl && !isMusicDecoding && (
+                          <div className="flex items-center gap-2 w-full">
+                            <button 
+                              onClick={() => setIsMusicMuted(!isMusicMuted)}
+                              className="flex-1 flex items-center justify-center gap-2 bg-[#2a2d35] hover:bg-[#353941] text-gray-300 border border-[#353941] py-2 rounded-lg text-xs font-bold transition-all"
+                              title={isMusicMuted ? "Unmute Preview" : "Mute Preview"}
+                            >
+                              {isMusicMuted ? (
+                                <>
+                                  <VolumeX size={14} className="text-red-400" />
+                                  <span>UNMUTE PREVIEW</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Volume2 size={14} className="text-green-400" />
+                                  <span>MUTE PREVIEW</span>
+                                </>
+                              )}
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setUploadedMusicFile(null);
+                                setUploadedMusicUrl(null);
+                                setUploadedMusicBuffer(null);
+                              }}
+                              className="p-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-lg transition-all"
+                              title="Remove Music"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                      
+                      {isMusicDecoding && (
+                        <p className="text-[10px] text-amber-400 mt-2 text-center font-bold animate-pulse">
+                          ⏳ Extracting only the audio track from the media file...
+                        </p>
+                      )}
+
+                      {!isMusicDecoding && uploadedMusicFile && (
+                        <div className="mt-2 p-2.5 bg-[#2a2d35]/50 rounded-lg border border-[#353941] text-center">
+                          <p className="text-[10px] text-emerald-400 font-bold truncate">
+                            {uploadedMusicFile.type.startsWith('video/') ? '🎬 Video Audio Extracted:' : '🎵 Audio Loaded:'} {uploadedMusicFile.name}
+                          </p>
+                          {uploadedMusicBuffer && (
+                            <p className="text-[9px] text-gray-400 mt-0.5 font-medium">
+                              {uploadedMusicFile.type.startsWith('video/') ? 'Extracted AAC Stream' : 'Mpeg Audio Stream'} • {(uploadedMusicBuffer.sampleRate / 1000).toFixed(1)}kHz • {uploadedMusicBuffer.numberOfChannels === 2 ? 'Stereo' : 'Mono'} • {Math.round(uploadedMusicBuffer.duration)}s
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {!uploadedMusicFile && !isMusicDecoding && (
+                        <p className="text-[9px] text-gray-500 mt-2 text-center leading-relaxed">
+                          Supports MP3 audio files or any MP4 video files. Upload an MP4 and the system will instantly extract and sync its audio track as your background music!
+                        </p>
+                      )}
                     </div>
                   </div>
                 </div>
