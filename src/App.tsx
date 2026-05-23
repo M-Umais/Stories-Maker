@@ -17,7 +17,8 @@ import {
   Loader2,
   MoveRight,
   Plus,
-  Trash2
+  Trash2,
+  FileImage
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toPng, toCanvas } from 'html-to-image';
@@ -28,7 +29,7 @@ import { TEMPLATE_PRESETS, TemplatePreset } from './constants';
 import JSZip from 'jszip';
 import Papa from 'papaparse';
 
-type TabType = 'profile' | 'typography' | 'background' | 'footer';
+type TabType = 'profile' | 'typography' | 'background' | 'footer' | 'pictext';
 
 // Helper to highlight random words while keeping double-bracket [[box backgrounds]] completely intact
 const getRandomHighlights = (text: string) => {
@@ -410,6 +411,17 @@ export default function App() {
     }
   ]);
 
+  // Picture & Text Bulk State
+  const [isPicTextBulk, setIsPicTextBulk] = useState(false);
+  const [picTextBulkStories, setPicTextBulkStories] = useState<any[]>([
+    {
+      text: 'Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [[Again?]] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...',
+      image: null,
+      fontSize: 62,
+      highlightColor: '#150621'
+    }
+  ]);
+
   const addBulkStory = () => {
     setBulkStories(prev => [...prev, {
       text: '',
@@ -420,6 +432,21 @@ export default function App() {
 
   const removeBulkStory = (index: number) => {
     setBulkStories(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const [bulkImageUploadIndex, setBulkImageUploadIndex] = useState<number | null>(null);
+
+  const addPicTextBulkStory = () => {
+    setPicTextBulkStories(prev => [...prev, {
+      text: '',
+      image: null,
+      fontSize: fontSize || 62,
+      highlightColor: highlightColor || '#150621'
+    }]);
+  };
+
+  const removePicTextBulkStory = (index: number) => {
+    setPicTextBulkStories(prev => prev.filter((_, i) => i !== index));
   };
   
   // Profile State
@@ -458,6 +485,10 @@ export default function App() {
   const [letterSpacing, setLetterSpacing] = useState(0);
   const [highlightUnderline, setHighlightUnderline] = useState(false);
   const [boldParagraphIndex, setBoldParagraphIndex] = useState<number | null>(null);
+  const [storyImage, setStoryImage] = useState<string | null>(null);
+  const [storyImageHeight, setStoryImageHeight] = useState<number>(750);
+  const [storyImageRadius, setStoryImageRadius] = useState<number>(16);
+  const [storyImageFit, setStoryImageFit] = useState<'cover' | 'contain' | 'fill'>('cover');
 
   // Background State
   const [bgStyle, setBgStyle] = useState<'solid' | 'gradient' | 'image'>('solid');
@@ -495,6 +526,9 @@ export default function App() {
   const videoBgInputRef = useRef<HTMLInputElement>(null);
   const fullImageInputRef = useRef<HTMLInputElement>(null);
   const csvInputRef = useRef<HTMLInputElement>(null);
+  const picTextCsvInputRef = useRef<HTMLInputElement>(null);
+  const storyImageInputRef = useRef<HTMLInputElement>(null);
+  const bulkStoryImageInputRef = useRef<HTMLInputElement>(null);
 
   const handleReset = () => {
     applyPreset(TEMPLATE_PRESETS[1].id);
@@ -507,6 +541,10 @@ export default function App() {
     setShowSubtitle(true);
     setStoryText('Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [Again?] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...');
     setBoldParagraphIndex(null);
+    setStoryImage(null);
+    setStoryImageHeight(750);
+    setStoryImageRadius(16);
+    setStoryImageFit('cover');
     setBulkStories([
       {
         text: 'Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [Again?] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...',
@@ -570,6 +608,7 @@ export default function App() {
     setShowSubtitle(true);
     setStoryText('');
     setBoldParagraphIndex(null);
+    setStoryImage(null);
     setFooterText('CONTINUE READING IN COMMENT');
     const randomPreset = TEMPLATE_PRESETS[Math.floor(Math.random() * TEMPLATE_PRESETS.length)];
     applyPreset(randomPreset.id);
@@ -652,6 +691,19 @@ export default function App() {
     }
   };
 
+  const handleStoryImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          setStoryImage(event.target.result as string);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const handleVideoBgUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -694,6 +746,69 @@ export default function App() {
       });
     }
     // Reset input so the same file can be uploaded again if needed
+    e.target.value = '';
+  };
+
+  const handlePicTextCsvUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      Papa.parse(file, {
+        complete: (results) => {
+          const data = results.data as any[];
+          const parsed: any[] = [];
+          data.forEach((row) => {
+            let imgVal = '';
+            let txtVal = '';
+            if (Array.isArray(row)) {
+              if (row.length >= 2) {
+                const col0 = String(row[0] || '').trim();
+                const col1 = String(row[1] || '').trim();
+                const isCol0Img = /^(https?:\/\/|\/|data:image)/i.test(col0) || /\.(png|jpe?g|gif|webp|svg)/i.test(col0);
+                const isCol1Img = /^(https?:\/\/|\/|data:image)/i.test(col1) || /\.(png|jpe?g|gif|webp|svg)/i.test(col1);
+                if (isCol0Img && !isCol1Img) {
+                  imgVal = col0;
+                  txtVal = col1;
+                } else if (isCol1Img && !isCol0Img) {
+                  imgVal = col1;
+                  txtVal = col0;
+                } else {
+                  // Fallbacks
+                  imgVal = col0;
+                  txtVal = col1;
+                }
+              } else if (row.length === 1) {
+                txtVal = String(row[0] || '').trim();
+              }
+            } else if (row && typeof row === 'object') {
+              const values = Object.values(row);
+              if (values.length >= 2) {
+                imgVal = String(values[0] || '').trim();
+                txtVal = String(values[1] || '').trim();
+              } else if (values.length === 1) {
+                txtVal = String(values[0] || '').trim();
+              }
+            }
+            // Skip header raw labels
+            if (txtVal.toLowerCase() === 'text' || txtVal.toLowerCase() === 'story' || imgVal.toLowerCase() === 'image' || imgVal.toLowerCase() === 'url') {
+              return;
+            }
+            if (txtVal || imgVal) {
+              parsed.push({
+                text: txtVal,
+                image: imgVal || null,
+                fontSize: fontSize || 62,
+                highlightColor: highlightColor || '#150621'
+              });
+            }
+          });
+          if (parsed.length > 0) {
+            setPicTextBulkStories(parsed);
+          }
+        },
+        header: false,
+        skipEmptyLines: true
+      });
+    }
     e.target.value = '';
   };
 
@@ -840,7 +955,20 @@ export default function App() {
   }, [previewRef, exportDuration]);
   
   const handleRandomHighlight = (index?: number) => {
-    if (isBulkMode && typeof index === 'number') {
+    if (activeTab === 'pictext' && isPicTextBulk && typeof index === 'number') {
+      const newStories = [...picTextBulkStories];
+      const rawText = newStories[index].text;
+      const parts = rawText.split(/(\[\[.*?\]\])/);
+      const cleanedParts = parts.map(part => {
+        if (part.startsWith('[[') && part.endsWith(']]')) {
+          return part;
+        }
+        return part.replace(/[\[\]]/g, '');
+      });
+      const cleanText = cleanedParts.join('');
+      newStories[index].text = getRandomHighlights(cleanText);
+      setPicTextBulkStories(newStories);
+    } else if (isBulkMode && typeof index === 'number') {
       const newBulk = [...bulkStories];
       const rawText = newBulk[index].text;
       const parts = rawText.split(/(\[\[.*?\]\])/);
@@ -863,6 +991,57 @@ export default function App() {
       });
       const cleanText = cleanedParts.join('');
       setStoryText(getRandomHighlights(cleanText));
+    }
+  };
+
+  const handleRemoveHighlight = (index?: number) => {
+    if (activeTab === 'pictext' && isPicTextBulk && typeof index === 'number') {
+      const newStories = [...picTextBulkStories];
+      const activeEl = document.activeElement as HTMLTextAreaElement;
+      if (activeEl && activeEl.tagName === 'TEXTAREA' && typeof activeEl.selectionStart === 'number') {
+        const start = activeEl.selectionStart;
+        const end = activeEl.selectionEnd;
+        if (start !== end) {
+          const text = newStories[index].text;
+          const selectedText = text.substring(start, end);
+          const cleanSelection = selectedText.replace(/[\[\]]/g, '');
+          newStories[index].text = text.substring(0, start) + cleanSelection + text.substring(end);
+          setPicTextBulkStories(newStories);
+          return;
+        }
+      }
+      newStories[index].text = newStories[index].text.replace(/[\[\]]/g, '');
+      setPicTextBulkStories(newStories);
+    } else if (isBulkMode && typeof index === 'number') {
+      const newBulk = [...bulkStories];
+      const activeEl = document.activeElement as HTMLTextAreaElement;
+      if (activeEl && activeEl.tagName === 'TEXTAREA' && typeof activeEl.selectionStart === 'number') {
+        const start = activeEl.selectionStart;
+        const end = activeEl.selectionEnd;
+        if (start !== end) {
+          const text = newBulk[index].text;
+          const selectedText = text.substring(start, end);
+          const cleanSelection = selectedText.replace(/[\[\]]/g, '');
+          newBulk[index].text = text.substring(0, start) + cleanSelection + text.substring(end);
+          setBulkStories(newBulk);
+          return;
+        }
+      }
+      newBulk[index].text = newBulk[index].text.replace(/[\[\]]/g, '');
+      setBulkStories(newBulk);
+    } else {
+      const activeEl = document.activeElement as HTMLTextAreaElement;
+      if (activeEl && activeEl.tagName === 'TEXTAREA' && typeof activeEl.selectionStart === 'number') {
+        const start = activeEl.selectionStart;
+        const end = activeEl.selectionEnd;
+        if (start !== end) {
+          const selectedText = storyText.substring(start, end);
+          const cleanSelection = selectedText.replace(/[\[\]]/g, '');
+          setStoryText(storyText.substring(0, start) + cleanSelection + storyText.substring(end));
+          return;
+        }
+      }
+      setStoryText(storyText.replace(/[\[\]]/g, ''));
     }
   };
 
@@ -936,7 +1115,9 @@ export default function App() {
     showFooter, footerFont, footerBgStyle, footerBgColor, footerTextColor, 
     footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor,
     bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly, removePaddingWhenHidden,
-    videoBackground, isExporting, boldParagraphIndex
+    videoBackground, isExporting, boldParagraphIndex,
+    storyImage, storyImageHeight, storyImageRadius, storyImageFit,
+    isPicTextMode: activeTab === 'pictext'
   };
 
   return (
@@ -986,6 +1167,52 @@ export default function App() {
         accept=".csv,text/csv"
       />
 
+      {/* Hidden Picture & Text CSV Input */}
+      <input 
+        type="file" 
+        ref={picTextCsvInputRef} 
+        onChange={handlePicTextCsvUpload} 
+        className="hidden" 
+        accept=".csv,text/csv"
+      />
+
+      {/* Hidden Story Image Input */}
+      <input 
+        type="file" 
+        ref={storyImageInputRef} 
+        onChange={handleStoryImageUpload} 
+        className="hidden" 
+        accept="image/*"
+      />
+
+      {/* Hidden Picture & Text Bulk Story Image Input */}
+      <input 
+        type="file" 
+        ref={bulkStoryImageInputRef} 
+        className="hidden" 
+        accept="image/*"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file && bulkImageUploadIndex !== null) {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+              if (event.target?.result) {
+                setPicTextBulkStories(prev => {
+                  const copy = [...prev];
+                  copy[bulkImageUploadIndex] = {
+                    ...copy[bulkImageUploadIndex],
+                    image: event.target.result as string
+                  };
+                  return copy;
+                });
+              }
+            };
+            reader.readAsDataURL(file);
+          }
+          e.target.value = '';
+        }}
+      />
+
       {/* Export Modal */}
       <AnimatePresence>
         {isExportModalOpen && (
@@ -1029,7 +1256,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  {isBulkMode && (
+                  {(isBulkMode || (activeTab === 'pictext' && isPicTextBulk)) && (
                     <div 
                       onClick={() => !isExporting && handleBulkDownload()}
                       className={cn(
@@ -1050,7 +1277,7 @@ export default function App() {
                         </div>
                         <div className="flex-1">
                           <h4 className="font-bold text-purple-400">Bulk Download Video (ZIP)</h4>
-                          <p className="text-xs text-gray-500">Render all {bulkStories.filter(s => s.text.trim().length > 0).length} stories into a ZIP</p>
+                          <p className="text-xs text-gray-500">Render all {activeTab === 'pictext' ? picTextBulkStories.filter(s => s.text.trim().length > 0 || s.image).length : bulkStories.filter(s => s.text.trim().length > 0).length} stories into a ZIP</p>
                           {isExporting && bulkExportInfo && <p className="text-[10px] text-purple-400 font-bold uppercase tracking-widest mt-0.5">{bulkExportInfo} · {exportProgress}%</p>}
                         </div>
                       </div>
@@ -1150,14 +1377,16 @@ export default function App() {
         {/* Tab Selection */}
         <div className="flex p-2 gap-1 bg-[#14161b]">
           {( [
-            { id: 'profile', icon: User },
-            { id: 'typography', icon: Type },
-            { id: 'background', icon: ImageIcon },
-            { id: 'footer', icon: Layout },
+            { id: 'profile', icon: User, label: 'Profile' },
+            { id: 'typography', icon: Type, label: 'Typography' },
+            { id: 'background', icon: ImageIcon, label: 'Background/Overlay' },
+            { id: 'footer', icon: Layout, label: 'Footer Settings' },
+            { id: 'pictext', icon: FileImage, label: 'Picture & Text Layout' },
           ] as const ).map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as TabType)}
+              title={tab.label}
               className={cn(
                 "flex-1 flex items-center justify-center py-2 rounded transition-all",
                 activeTab === tab.id 
@@ -1576,14 +1805,22 @@ export default function App() {
                 </div>
 
                 {!isBulkMode && (
-                  <div className="grid grid-cols-1">
-                    <button 
-                      onClick={() => handleRandomHighlight()}
-                      className="w-full flex items-center justify-center gap-2 bg-[#8ab4f8] hover:bg-[#a1c2fa] text-black font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98] mt-2"
-                    >
-                      <Zap size={16} /> HIGHLIGHT TEXT
-                    </button>
-                    <p className="text-[10px] text-gray-500 text-center mt-2 italic px-4">Click to randomly highlight parts of your story with the selected style.</p>
+                  <div className="space-y-2 mt-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <button 
+                        onClick={() => handleRandomHighlight()}
+                        className="flex items-center justify-center gap-1.5 bg-[#8ab4f8] hover:bg-[#a1c2fa] text-black font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98] text-xs"
+                      >
+                        <Zap size={14} /> HIGHLIGHT
+                      </button>
+                      <button 
+                        onClick={() => handleRemoveHighlight()}
+                        className="flex items-center justify-center gap-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 hover:border-red-500/40 text-red-400 font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98] text-xs"
+                      >
+                        <Trash2 size={14} /> REMOVE CLR
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-gray-500 text-center italic px-4">Select text in area to remove its highlight, or click Remove with no selection to clear all highlights.</p>
                   </div>
                 )}
 
@@ -1606,51 +1843,168 @@ export default function App() {
 
                 <div className="text-center font-bold text-[10px] text-gray-600 tracking-widest border-t border-b border-[#2a2d35] py-2 uppercase">
                   TYPOGRAPHY
-                </div>
+                </div>                {!isBulkMode ? (
+                  <div className="space-y-4">
+                    {/* Story Inline Image Upload */}
+                    <div className="p-3 bg-[#2a2d35]/30 rounded-xl border border-[#2a2d35] space-y-3">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block">Inline Top Image</label>
+                        {storyImage && (
+                          <button 
+                            onClick={() => setStoryImage(null)}
+                            className="text-[10px] text-red-400 hover:text-red-300 transition-colors font-bold flex items-center gap-1"
+                          >
+                            <Trash2 size={12} /> REMOVE
+                          </button>
+                        )}
+                      </div>
 
-                {!isBulkMode ? (
-                  <div>
-                    <div className="flex justify-between items-center mb-1">
-                      <label className="text-xs text-gray-400">Story Content</label>
-                      <button 
-                        onClick={() => handleRandomHighlight()}
-                        className="flex items-center gap-1.5 px-2 py-1 bg-[#2a2d35] hover:bg-[#353941] rounded text-[10px] text-blue-400 hover:text-blue-300 transition-all font-bold"
-                      >
-                        <Zap size={10} /> RANDOM HIGHLIGHT
-                      </button>
+                      {!storyImage ? (
+                        <div 
+                          onClick={() => storyImageInputRef.current?.click()}
+                          className="border-2 border-dashed border-[#353941] hover:border-blue-500/50 bg-[#1a1d23]/50 hover:bg-blue-500/5 rounded-xl p-4 text-center cursor-pointer transition-all space-y-1.5"
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                          }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            const file = e.dataTransfer.files?.[0];
+                            if (file && file.type.startsWith('image/')) {
+                              const reader = new FileReader();
+                              reader.onload = (event) => {
+                                if (event.target?.result) {
+                                  setStoryImage(event.target.result as string);
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        >
+                          <Upload className="mx-auto text-gray-500" size={24} />
+                          <p className="text-xs font-bold text-gray-300">Upload inline story image</p>
+                          <p className="text-[10px] text-gray-500 uppercase">Click or Drag & Drop</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-3 bg-[#1a1d23] p-2 rounded-lg border border-[#353941]">
+                            <img 
+                              src={storyImage} 
+                              alt="Upload Preview" 
+                              className="w-12 h-12 rounded object-cover border border-[#2a2d35]" 
+                            />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs text-gray-300 font-medium truncate">Uploaded Image</p>
+                              <p className="text-[10px] text-gray-500 uppercase tracking-wider">Top of card</p>
+                            </div>
+                            <button 
+                              onClick={() => storyImageInputRef.current?.click()}
+                              className="text-[10px] px-2.5 py-1 bg-[#2a2d35] hover:bg-[#353941] rounded font-bold text-blue-400 transition-all"
+                            >
+                              CHANGE
+                            </button>
+                          </div>
+
+                          <div className="space-y-2 pt-1 border-t border-[#2a2d35]/50">
+                            <div>
+                              <div className="flex justify-between text-[10px] text-gray-500">
+                                <span>IMAGE HEIGHT</span>
+                                <span>{storyImageHeight}px</span>
+                              </div>
+                              <input 
+                                type="range" 
+                                min="100" 
+                                max="1200" 
+                                step="10"
+                                value={storyImageHeight}
+                                onChange={(e) => setStoryImageHeight(parseInt(e.target.value))}
+                                className="w-full accent-blue-500"
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-[10px] text-gray-500 block mb-1">IMAGE FIT</label>
+                                <select 
+                                  value={storyImageFit}
+                                  onChange={(e: any) => setStoryImageFit(e.target.value)}
+                                  className="w-full bg-[#1a1d23] border border-[#30343c] rounded p-1.5 text-xs text-gray-300 outline-none"
+                                >
+                                  <option value="cover">Cover (crop)</option>
+                                  <option value="contain">Contain (fit)</option>
+                                  <option value="fill">Fill (stretch)</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-gray-500 block mb-1">CORNERS</label>
+                                <select 
+                                  value={storyImageRadius}
+                                  onChange={(e: any) => setStoryImageRadius(parseInt(e.target.value))}
+                                  className="w-full bg-[#1a1d23] border border-[#30343c] rounded p-1.5 text-xs text-gray-300 outline-none"
+                                >
+                                  <option value="0">Sharp (0px)</option>
+                                  <option value="8">Small (8px)</option>
+                                  <option value="16">Medium (16px)</option>
+                                  <option value="24">Large (24px)</option>
+                                  <option value="36">Card Radius</option>
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    <textarea 
-                      value={storyText}
-                      onChange={(e) => setStoryText(e.target.value)}
-                      rows={6}
-                      placeholder="Type your story here."
-                      className="w-full bg-[#2a2d35] border border-[#353941] rounded px-3 py-2 text-sm outline-none focus:border-blue-500 resize-none"
-                    />
 
-                    {/* Bold Specific Paragraph Selector */}
-                    <div className="mt-3 p-3 bg-[#2a2d35]/30 rounded-xl border border-[#2a2d35] space-y-2">
-                      <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block">Bold Paragraph Only</label>
-                      <select 
-                        value={boldParagraphIndex === null ? 'none' : boldParagraphIndex}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setBoldParagraphIndex(val === 'none' ? null : parseInt(val));
-                        }}
-                        className="w-full bg-[#1a1d23] border border-[#353941] rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 text-gray-300"
-                      >
-                        <option value="none">None (Regular Weight)</option>
-                        {storyText.split('\n').map((para, idx) => {
-                          const cleanPara = para.trim();
-                          const displayNum = idx + 1;
-                          const previewText = cleanPara.length > 30 ? cleanPara.substring(0, 30) + '...' : cleanPara;
-                          return (
-                            <option key={idx} value={idx}>
-                              Paragraph {displayNum}: {cleanPara.length > 0 ? previewText : '(Empty Line)'}
-                            </option>
-                          );
-                        })}
-                      </select>
-                      <p className="text-[9px] text-gray-500 italic font-medium">Bolds a selected paragraph only, leaving others unaffected</p>
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="text-xs text-gray-400">Story Content</label>
+                        <div className="flex items-center gap-1.5">
+                          <button 
+                            onClick={() => handleRandomHighlight()}
+                            className="flex items-center gap-1.5 px-2 py-1 bg-[#2a2d35] hover:bg-[#353941] rounded text-[10px] text-blue-400 hover:text-blue-300 transition-all font-bold"
+                          >
+                            <Zap size={10} /> RANDOM HIGHLIGHT
+                          </button>
+                          <button 
+                            onClick={() => handleRemoveHighlight()}
+                            className="flex items-center gap-1.5 px-2 py-1 bg-red-950/20 border border-red-900/40 hover:bg-red-950/40 rounded text-[10px] text-red-400 hover:text-red-300 transition-all font-bold"
+                          >
+                            <Trash2 size={10} /> REMOVE HIGHLIGHT
+                          </button>
+                        </div>
+                      </div>
+                      <textarea 
+                        value={storyText}
+                        onChange={(e) => setStoryText(e.target.value)}
+                        rows={6}
+                        placeholder="Type your story here."
+                        className="w-full bg-[#2a2d35] border border-[#353941] rounded px-3 py-2 text-sm outline-none focus:border-blue-500 resize-none"
+                      />
+
+                      {/* Bold Specific Paragraph Selector */}
+                      <div className="mt-3 p-3 bg-[#2a2d35]/30 rounded-xl border border-[#2a2d35] space-y-2">
+                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block">Bold Paragraph Only</label>
+                        <select 
+                          value={boldParagraphIndex === null ? 'none' : boldParagraphIndex}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setBoldParagraphIndex(val === 'none' ? null : parseInt(val));
+                          }}
+                          className="w-full bg-[#1a1d23] border border-[#353941] rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 text-gray-300"
+                        >
+                          <option value="none">None (Regular Weight)</option>
+                          {storyText.split('\n').map((para, idx) => {
+                            const cleanPara = para.trim();
+                            const displayNum = idx + 1;
+                            const previewText = cleanPara.length > 30 ? cleanPara.substring(0, 30) + '...' : cleanPara;
+                            return (
+                              <option key={idx} value={idx}>
+                                Paragraph {displayNum}: {cleanPara.length > 0 ? previewText : '(Empty Line)'}
+                              </option>
+                            );
+                          })}
+                        </select>
+                        <p className="text-[9px] text-gray-500 italic font-medium">Bolds a selected paragraph only, leaving others unaffected</p>
+                      </div>
                     </div>
                   </div>
                 ) : (
@@ -1684,12 +2038,21 @@ export default function App() {
                                </button>
                              )}
                            </div>
-                           <button 
-                              onClick={() => handleRandomHighlight(index)}
-                              className="flex items-center gap-1 text-[10px] text-blue-400 font-bold hover:text-blue-300 transition-colors"
-                           >
-                             <Zap size={10} /> RANDOM HIGHLIGHT
-                           </button>
+                           <div className="flex items-center gap-2">
+                             <button 
+                                onClick={() => handleRandomHighlight(index)}
+                                className="flex items-center gap-1 text-[10px] text-blue-400 font-bold hover:text-blue-300 transition-colors"
+                             >
+                               <Zap size={10} /> RANDOM HIGHLIGHT
+                             </button>
+                             <span className="text-gray-700 text-[10px]">|</span>
+                             <button 
+                                onClick={() => handleRemoveHighlight(index)}
+                                className="flex items-center gap-1 text-[10px] text-red-500 font-bold hover:text-red-400 transition-colors"
+                             >
+                               <Trash2 size={10} /> REMOVE HIGHLIGHT
+                             </button>
+                           </div>
                         </div>
                         
                         <textarea 
@@ -2274,6 +2637,660 @@ export default function App() {
                 </button>
               </motion.div>
             )}
+
+            {activeTab === 'pictext' && (
+              <motion.div
+                key="pictext"
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 10 }}
+                className="space-y-6"
+              >
+                <div className="text-center font-bold text-[10px] text-gray-600 tracking-widest border-t border-b border-[#2a2d35] py-2 uppercase">
+                  Layout: Picture & Text
+                </div>
+
+                {/* Single / Bulk Mode Toggle Selector */}
+                <div className="flex bg-[#1a1d23] p-1 rounded-xl border border-[#2a2d35]">
+                  <button
+                    onClick={() => setIsPicTextBulk(false)}
+                    className={cn(
+                      "flex-1 py-1.5 text-xs font-bold rounded-lg transition-all uppercase",
+                      !isPicTextBulk ? "bg-blue-500 text-white" : "text-gray-400 hover:text-white"
+                    )}
+                  >
+                    Single Entry
+                  </button>
+                  <button
+                    onClick={() => setIsPicTextBulk(true)}
+                    className={cn(
+                      "flex-1 py-1.5 text-xs font-bold rounded-lg transition-all uppercase",
+                      isPicTextBulk ? "bg-blue-500 text-white" : "text-gray-400 hover:text-white"
+                    )}
+                  >
+                    Bulk Mode
+                  </button>
+                </div>
+
+                {!isPicTextBulk ? (
+                  <>
+                    <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl text-xs text-blue-300">
+                      <p className="font-semibold mb-1">Picture & Text Mode Active</p>
+                      Choose a template preset to style the page background and text font/color with absolutely no card outlines, borders, profile details, or dot grids.
+                    </div>
+
+                    {/* Template Preset Selector (No Card) */}
+                    <div className="p-3 bg-[#2a2d35]/30 rounded-xl border border-[#2a2d35] space-y-2">
+                      <label className="text-[10px] uppercase tracking-wider text-gray-500 font-bold block mb-1">Style Preset</label>
+                      <div className="relative group">
+                        <select 
+                          value={selectedPresetId}
+                          onChange={(e) => applyPreset(e.target.value)}
+                          className="w-full bg-[#1a1d23] border border-[#353941] rounded-lg px-3 py-2 text-xs appearance-none outline-none focus:border-blue-500/50 transition-all hover:bg-[#212830] cursor-pointer text-gray-300"
+                        >
+                          {['Bold', 'Minimal', 'Warm', 'Cool', 'Dark'].map((category) => {
+                            const categoryPresets = TEMPLATE_PRESETS.filter(p => p.category === category);
+                            if (categoryPresets.length === 0) return null;
+                            
+                            return (
+                              <optgroup key={category} label={category.toUpperCase()} className="bg-[#1c2229] text-gray-400 font-bold">
+                                {categoryPresets.map((preset) => (
+                                  <option key={preset.id} value={preset.id} className="text-gray-200 py-1.5">
+                                    {preset.name}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            );
+                          })}
+                        </select>
+                        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none group-focus-within:text-blue-500 transition-colors" />
+                      </div>
+                    </div>
+
+                    {/* Inline Image Upload */}
+                    <div className="p-3 bg-[#2a2d35]/30 rounded-xl border border-[#2a2d35] space-y-3">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block">Core Layout Image</label>
+                        {storyImage && (
+                          <button 
+                            onClick={() => setStoryImage(null)}
+                            className="text-[10px] text-red-400 hover:text-red-300 transition-colors font-bold flex items-center gap-1"
+                          >
+                            <Trash2 size={12} /> REMOVE
+                          </button>
+                        )}
+                      </div>
+
+                      {!storyImage ? (
+                        <div 
+                          onClick={() => storyImageInputRef.current?.click()}
+                          className="border-2 border-dashed border-[#353941] hover:border-blue-500/50 bg-[#1a1d23]/50 hover:bg-blue-500/5 rounded-xl p-4 text-center cursor-pointer transition-all space-y-1.5"
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                          }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            const file = e.dataTransfer.files?.[0];
+                            if (file && file.type.startsWith('image/')) {
+                              const reader = new FileReader();
+                              reader.onload = (event) => {
+                                if (event.target?.result) {
+                                  setStoryImage(event.target.result as string);
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        >
+                          <Upload className="mx-auto text-gray-500" size={24} />
+                          <p className="text-xs font-bold text-gray-300">Upload primary layout image</p>
+                          <p className="text-[10px] text-gray-500 uppercase">Click or Drag & Drop</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-3 bg-[#1a1d23] p-2 rounded-lg border border-[#353941]">
+                            <img 
+                              src={storyImage} 
+                              alt="Upload Preview" 
+                              className="w-12 h-12 rounded object-cover border border-[#2a2d35]" 
+                            />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs text-gray-300 font-medium truncate">Primary Image</p>
+                              <p className="text-[10px] text-gray-500 uppercase tracking-wider">Top of canvas</p>
+                            </div>
+                            <button 
+                              onClick={() => storyImageInputRef.current?.click()}
+                              className="text-[10px] px-2.5 py-1 bg-[#2a2d35] hover:bg-[#353941] rounded font-bold text-blue-400 transition-all"
+                            >
+                              CHANGE
+                            </button>
+                          </div>
+
+                          <div className="space-y-2 pt-1 border-t border-[#2a2d35]/50">
+                            <div>
+                              <div className="flex justify-between text-[10px] text-gray-500">
+                                <span>IMAGE HEIGHT</span>
+                                <span>{storyImageHeight}px</span>
+                              </div>
+                              <input 
+                                type="range" 
+                                min="100" 
+                                max="1200" 
+                                step="10"
+                                value={storyImageHeight}
+                                onChange={(e) => setStoryImageHeight(parseInt(e.target.value))}
+                                className="w-full accent-blue-500"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-[10px] text-gray-500 block mb-1">IMAGE FIT</label>
+                              <select 
+                                value={storyImageFit}
+                                onChange={(e: any) => setStoryImageFit(e.target.value)}
+                                className="w-full bg-[#1a1d23] border border-[#30343c] rounded p-1.5 text-xs text-gray-300 outline-none"
+                              >
+                                <option value="cover">Cover (crop)</option>
+                                <option value="contain">Contain (fit)</option>
+                                <option value="fill">Fill (stretch)</option>
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Story Content Area */}
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="text-xs text-gray-400">Story Text Content</label>
+                        <div className="flex items-center gap-1.5">
+                          <button 
+                            onClick={() => handleRandomHighlight()}
+                            className="flex items-center gap-1.5 px-2 py-1 bg-[#2a2d35] hover:bg-[#353941] rounded text-[10px] text-blue-400 hover:text-blue-300 transition-all font-bold"
+                          >
+                            <Zap size={10} /> RANDOM HIGHLIGHT
+                          </button>
+                          <button 
+                            onClick={() => handleRemoveHighlight()}
+                            className="flex items-center gap-1.5 px-2 py-1 bg-red-950/20 border border-red-900/40 hover:bg-red-950/40 rounded text-[10px] text-red-400 hover:text-red-300 transition-all font-bold"
+                          >
+                            <Trash2 size={10} /> REMOVE HIGHLIGHT
+                          </button>
+                        </div>
+                      </div>
+                      <textarea 
+                        value={storyText}
+                        onChange={(e) => setStoryText(e.target.value)}
+                        rows={6}
+                        placeholder="Type your story here."
+                        className="w-full bg-[#2a2d35] border border-[#353941] rounded px-3 py-2 text-sm outline-none focus:border-blue-500 resize-none text-gray-300"
+                      />
+                    </div>
+
+                    {/* Bold specific paragraph */}
+                    <div className="p-3 bg-[#2a2d35]/30 rounded-xl border border-[#2a2d35] space-y-2">
+                      <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block">Bold Paragraph Only</label>
+                      <select 
+                        value={boldParagraphIndex === null ? 'none' : boldParagraphIndex}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setBoldParagraphIndex(val === 'none' ? null : parseInt(val));
+                        }}
+                        className="w-full bg-[#1a1d23] border border-[#353941] rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 text-gray-300"
+                      >
+                        <option value="none">None (Regular Weight)</option>
+                        {storyText.split('\n').map((para, idx) => {
+                          const cleanPara = para.trim();
+                          const displayNum = idx + 1;
+                          const previewText = cleanPara.length > 30 ? cleanPara.substring(0, 30) + '...' : cleanPara;
+                          return (
+                            <option key={idx} value={idx}>
+                              Paragraph {displayNum}: {cleanPara.length > 0 ? previewText : '(Empty Line)'}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+
+                    {/* Typography controls */}
+                    <div className="p-3 bg-[#2a2d35]/30 rounded-xl border border-[#2a2d35] space-y-4">
+                      <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block border-b border-[#2a2d35] pb-2">Typography & Style</label>
+                      
+                      <div>
+                        <label className="text-xs text-gray-400 block mb-1">Font Family</label>
+                        <select 
+                          value={fontFamily}
+                          onChange={(e) => setFontFamily(e.target.value)}
+                          className="w-full bg-[#1a1d23] border border-[#353941] rounded px-3 py-2 text-sm outline-none text-gray-300 font-serif"
+                        >
+                          {fonts.map(f => (
+                            <option key={f.value} value={f.value} className={f.value}>
+                              {f.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="text-xs text-gray-400">Font Size ({fontSize}px)</span>
+                          <button onClick={() => setFontSize(62)} className="text-xs text-blue-400 hover:text-blue-300">
+                            Reset (62px)
+                          </button>
+                        </div>
+                        <input 
+                          type="range" 
+                          min="24" 
+                          max="120" 
+                          value={fontSize} 
+                          onChange={(e) => setFontSize(parseInt(e.target.value))} 
+                          className="w-full accent-blue-500" 
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-xs text-gray-400 block mb-1">Text Alignment</label>
+                          <select 
+                            value={textAlign} 
+                            onChange={(e) => setTextAlign(e.target.value as any)}
+                            className="w-full bg-[#1a1d23] border border-[#353941] rounded px-2 py-1.5 text-xs text-gray-300 outline-none"
+                          >
+                            <option value="center">Center</option>
+                            <option value="left">Left</option>
+                            <option value="right">Right</option>
+                            <option value="justify">Justify</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-400 block mb-1">Font Color</label>
+                          <div className="flex items-center gap-2">
+                            <input type="color" value={textColor} onChange={(e) => setTextColor(e.target.value)} className="w-8 h-8 rounded border border-[#353941] cursor-pointer bg-transparent" />
+                            <input type="text" value={textColor} onChange={(e) => setTextColor(e.target.value)} className="w-full bg-[#1a1d23] border border-[#353941] rounded p-1 text-[10px] text-gray-300" />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div>
+                         <label className="text-xs text-gray-400 block mb-1">Highlight Color</label>
+                         <div className="flex items-center gap-3">
+                           <input 
+                             type="color" 
+                             value={highlightColor} 
+                             onChange={(e) => setHighlightColor(e.target.value)} 
+                             className="w-10 h-10 rounded-xl border border-[#353941] cursor-pointer bg-transparent flex-shrink-0" 
+                           />
+                           <input 
+                             type="text" 
+                             value={highlightColor} 
+                             onChange={(e) => setHighlightColor(e.target.value)} 
+                             className="w-full bg-[#1a1d23] border border-[#353941] rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-blue-500 text-gray-300" 
+                           />
+                         </div>
+                      </div>
+                    </div>
+
+                    {/* Footer Settings */}
+                    <div className="p-3 bg-[#2a2d35]/30 rounded-xl border border-[#2a2d35] space-y-4">
+                      <div className="flex items-center justify-between border-b border-[#2a2d35] pb-2">
+                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block font-bold">Footer (Optional)</label>
+                        <div className="flex items-center gap-2">
+                          <div 
+                            onClick={() => setShowFooter(!showFooter)}
+                            className={cn("w-10 h-5 rounded-full relative cursor-pointer transition-colors", showFooter ? "bg-blue-500" : "bg-[#1a1d23]")}
+                          >
+                            <div className={cn("absolute top-1 w-3 h-3 bg-white rounded-full transition-all", showFooter ? "left-6" : "left-1")}></div>
+                          </div>
+                          <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{showFooter ? "On" : "Off"}</span>
+                        </div>
+                      </div>
+
+                      {showFooter && (
+                        <div className="space-y-4 pt-1">
+                          <div>
+                            <label className="text-xs text-gray-400 block mb-1">Footer Text</label>
+                            <input 
+                              type="text" 
+                              value={footerText}
+                              onChange={(e) => setFooterText(e.target.value)}
+                              className="w-full bg-[#1a1d23] border border-[#353941] rounded px-3 py-2 text-xs outline-none focus:border-blue-500 text-gray-300"
+                              placeholder="CONTINUE READING"
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-xs text-gray-400 block mb-1">BG Style</label>
+                              <select 
+                                value={footerBgStyle}
+                                onChange={(e) => setFooterBgStyle(e.target.value as any)}
+                                className="w-full bg-[#1a1d23] border border-[#353941] rounded px-2 py-1.5 text-xs text-gray-300 outline-none"
+                              >
+                                <option value="none">None</option>
+                                <option value="text">Fit to text</option>
+                                <option value="card">Fit to card</option>
+                                <option value="fill">Fill (to edge)</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-xs text-gray-400 block mb-1 font-medium font-sans">Font</label>
+                              <select 
+                                value={footerFont}
+                                onChange={(e) => setFooterFont(e.target.value)}
+                                className="w-full bg-[#1a1d23] border border-[#353941] rounded px-2 py-1.5 text-xs text-gray-300 outline-none font-serif"
+                              >
+                                {fonts.map(f => (<option key={f.value} value={f.value} className={f.value}>{f.label}</option>))}
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-1">
+                              <label className="text-xs text-gray-400 block mb-1">BG Color</label>
+                              <div className="flex items-center gap-1.5">
+                                <input 
+                                  type="color" 
+                                  value={footerBgColor === 'transparent' ? '#000000' : footerBgColor} 
+                                  onChange={(e) => setFooterBgColor(e.target.value)} 
+                                  className="w-8 h-8 rounded border border-[#353941] cursor-pointer bg-transparent flex-shrink-0" 
+                                />
+                                <input 
+                                  type="text" 
+                                  value={footerBgColor === 'transparent' ? 'transparent' : footerBgColor} 
+                                  onChange={(e) => setFooterBgColor(e.target.value)} 
+                                  className="w-full bg-[#1a1d23] border border-[#353941] rounded p-1 text-[10px] text-gray-300 font-mono" 
+                                />
+                              </div>
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-xs text-gray-400 block mb-1 font-sans">Text Color</label>
+                              <div className="flex items-center gap-1.5">
+                                <input 
+                                  type="color" 
+                                  value={footerTextColor} 
+                                  onChange={(e) => setFooterTextColor(e.target.value)} 
+                                  className="w-8 h-8 rounded border border-[#353941] cursor-pointer bg-transparent flex-shrink-0" 
+                                />
+                                <input 
+                                  type="text" 
+                                  value={footerTextColor} 
+                                  onChange={(e) => setFooterTextColor(e.target.value)} 
+                                  className="w-full bg-[#1a1d23] border border-[#353941] rounded p-1 text-[10px] text-gray-300 font-mono" 
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="flex justify-between items-center mb-1">
+                              <span className="text-xs text-gray-400 font-sans">Font Size ({footerFontSize}px)</span>
+                              <button onClick={() => setFooterFontSize(32)} className="text-[10px] text-blue-400 hover:text-blue-300 font-bold">
+                                Reset
+                              </button>
+                            </div>
+                            <input 
+                              type="range" 
+                              min="8" 
+                              max="100" 
+                              value={footerFontSize} 
+                              onChange={(e) => setFooterFontSize(parseInt(e.target.value))} 
+                              className="w-full accent-blue-500" 
+                            />
+                          </div>
+
+                          <div>
+                            <div className="flex justify-between items-center mb-1">
+                              <span className="text-xs text-gray-400 font-sans">Vertical Move ({footerMove}px)</span>
+                              <button onClick={() => setFooterMove(0)} className="text-[10px] text-blue-400 hover:text-blue-300 font-bold">
+                                Reset
+                              </button>
+                            </div>
+                            <input 
+                              type="range" 
+                              min="-400" 
+                              max="400" 
+                              value={footerMove} 
+                              onChange={(e) => setFooterMove(parseInt(e.target.value))} 
+                              className="w-full accent-blue-500" 
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl text-xs text-blue-300">
+                      <p className="font-semibold mb-1">Bulk Picture & Text Mode</p>
+                      Keep the same template presets, but render multiple pages automatically with image URLs/files and text contents. No cards, borders, or backgrounds are used.
+                    </div>
+
+                    {/* CSV Upload */}
+                    <div className="p-4 bg-purple-500/10 border border-purple-500/20 rounded-xl flex items-center justify-between gap-4">
+                      <div className="flex-1">
+                        <h4 className="text-xs font-bold text-purple-400">Import CSV</h4>
+                        <p className="text-[10px] text-gray-500">Row layout with [Image URL/File, Story Text]</p>
+                      </div>
+                      <button 
+                        onClick={() => picTextCsvInputRef.current?.click()}
+                        className="px-3 py-1.5 bg-purple-500 hover:bg-purple-600 text-white text-[10px] font-bold rounded transition-colors flex items-center gap-1.5 shadow-md shadow-purple-500/10"
+                      >
+                        <Upload size={14} /> UPLOAD CSV
+                      </button>
+                    </div>
+
+                    {/* Manual List of Items */}
+                    <div className="space-y-6">
+                      <div className="flex justify-between items-center">
+                        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Pages ({picTextBulkStories.length})</h3>
+                        <button 
+                          onClick={() => {
+                            setPicTextBulkStories([{
+                              text: '',
+                              image: null,
+                              fontSize: 62,
+                              highlightColor: highlightColor
+                            }]);
+                          }}
+                          className="text-[10px] text-red-500 hover:text-red-400 font-bold uppercase transition-colors"
+                        >
+                          Clear All
+                        </button>
+                      </div>
+
+                      {picTextBulkStories.map((story, index) => (
+                        <div key={index} className="p-4 bg-[#1c2229] rounded-xl border border-[#2a2d35] space-y-4">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-black text-gray-500 tracking-[0.2em] uppercase">PAGE #{index + 1}</span>
+                            {picTextBulkStories.length > 1 && (
+                              <button 
+                                onClick={() => removePicTextBulkStory(index)}
+                                className="text-gray-500 hover:text-red-400 transition-colors p-1 hover:bg-[#212830] rounded-lg"
+                                title="Remove Page"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Image Selector (File or URL) */}
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-gray-600 uppercase tracking-wider">Page Image (File or URL)</label>
+                            
+                            <div className="grid grid-cols-[auto_1fr] gap-3 items-center">
+                              {/* Local file drag & drop trigger */}
+                              <div 
+                                onClick={() => {
+                                  setBulkImageUploadIndex(index);
+                                  setTimeout(() => {
+                                    bulkStoryImageInputRef.current?.click();
+                                  }, 50);
+                                }}
+                                className="w-16 h-16 rounded-xl border border-dashed border-[#353941] bg-[#14161b] hover:bg-blue-500/5 hover:border-blue-500/50 cursor-pointer overflow-hidden flex flex-col items-center justify-center transition-all flex-shrink-0"
+                                title="Upload local image file"
+                              >
+                                {story.image ? (
+                                  <img src={story.image} alt="" className="w-full h-full object-cover" />
+                                ) : (
+                                  <>
+                                    <Upload size={14} className="text-gray-500 mb-1" />
+                                    <span className="text-[8px] text-gray-500 font-bold uppercase">FILE</span>
+                                  </>
+                                )}
+                              </div>
+
+                              {/* Input URL alternate */}
+                              <div className="space-y-1 flex-1">
+                                <input 
+                                  type="text"
+                                  placeholder="Or paste external image URL..."
+                                  value={story.image && !story.image.startsWith('data:') ? story.image : ''}
+                                  onChange={(e) => {
+                                    const newStories = [...picTextBulkStories];
+                                    newStories[index].image = e.target.value.trim() || null;
+                                    setPicTextBulkStories(newStories);
+                                  }}
+                                  className="w-full bg-[#14161b] border border-[#2a2d35] rounded px-2.5 py-1.5 text-xs outline-none focus:border-blue-500 text-gray-300"
+                                />
+                                <div className="flex justify-between items-center text-[9px] text-gray-600 uppercase font-medium">
+                                  <span>LOCAL FILE OR IMAGE URL</span>
+                                  {story.image && (
+                                    <button 
+                                      onClick={() => {
+                                        const newStories = [...picTextBulkStories];
+                                        newStories[index].image = null;
+                                        setPicTextBulkStories(newStories);
+                                      }}
+                                      className="text-red-500 hover:text-red-400 font-semibold"
+                                    >
+                                      Remove image
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Story Textarea */}
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-gray-600 uppercase tracking-wider">Story Text Content</label>
+                            <textarea 
+                              rows={4}
+                              placeholder="Type your page story content here..."
+                              value={story.text}
+                              onChange={(e) => {
+                                const newStories = [...picTextBulkStories];
+                                newStories[index].text = e.target.value;
+                                setPicTextBulkStories(newStories);
+                              }}
+                              className="w-full bg-[#14161b] border border-[#2a2d35] rounded px-3 py-2 text-xs outline-none focus:border-blue-500 resize-none text-gray-300 font-sans"
+                            />
+                          </div>
+
+                          {/* Individual Settings */}
+                          <div className="grid grid-cols-2 gap-3 pt-2 border-t border-[#2a2d35]/30">
+                            <div>
+                              <div className="flex justify-between text-[10px] text-gray-500 mb-1">
+                                <span>Font Size</span>
+                                <span>{story.fontSize || 62}px</span>
+                              </div>
+                              <input 
+                                type="range" 
+                                min="24" 
+                                max="120" 
+                                value={story.fontSize || 62} 
+                                onChange={(e) => {
+                                  const newStories = [...picTextBulkStories];
+                                  newStories[index].fontSize = parseInt(e.target.value);
+                                  setPicTextBulkStories(newStories);
+                                }} 
+                                className="w-full accent-blue-500" 
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-gray-500 block mb-1">Highlight</label>
+                              <div className="flex items-center gap-1.5">
+                                <input 
+                                  type="color" 
+                                  value={story.highlightColor || '#150621'} 
+                                  onChange={(e) => {
+                                    const newStories = [...picTextBulkStories];
+                                    newStories[index].highlightColor = e.target.value;
+                                    setPicTextBulkStories(newStories);
+                                  }} 
+                                  className="w-6 h-6 rounded cursor-pointer bg-transparent border border-[#2a2d35] p-0 flex-shrink-0" 
+                                />
+                                <input 
+                                  type="text" 
+                                  value={story.highlightColor || '#150621'} 
+                                  onChange={(e) => {
+                                    const newStories = [...picTextBulkStories];
+                                    newStories[index].highlightColor = e.target.value;
+                                    setPicTextBulkStories(newStories);
+                                  }} 
+                                  className="w-full bg-[#14161b] border border-[#2a2d35] rounded p-1 text-[9px] text-gray-400 font-mono" 
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+
+                      <button 
+                        onClick={addPicTextBulkStory}
+                        className="w-full py-2.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 hover:text-blue-300 border border-dashed border-blue-500/30 rounded-xl font-bold text-xs uppercase transition-all flex items-center justify-center gap-2"
+                      >
+                        <Plus size={14} /> Add Manual Entry
+                      </button>
+                    </div>
+
+                    {/* Global style select preset */}
+                    <div className="p-3 bg-[#2a2d35]/30 rounded-xl border border-[#2a2d35] space-y-4">
+                      <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block border-b border-[#2a2d35] pb-1.5">Global Typography & Base Style</h4>
+                      
+                      <div>
+                        <label className="text-xs text-gray-400 block mb-1 block">Font Family</label>
+                        <select 
+                          value={fontFamily}
+                          onChange={(e) => setFontFamily(e.target.value)}
+                          className="w-full bg-[#1a1d23] border border-[#353941] rounded px-3 py-2 text-sm outline-none text-gray-300 font-serif"
+                        >
+                          {fonts.map(f => (
+                            <option key={f.value} value={f.value} className={f.value}>
+                              {f.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-xs text-gray-400 block mb-1">Text Alignment</label>
+                          <select 
+                            value={textAlign} 
+                            onChange={(e) => setTextAlign(e.target.value as any)}
+                            className="w-full bg-[#1a1d23] border border-[#353941] rounded px-2 py-1.5 text-xs text-gray-300 outline-none"
+                          >
+                            <option value="center">Center</option>
+                            <option value="left">Left</option>
+                            <option value="right">Right</option>
+                            <option value="justify">Justify</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-400 block mb-1">Font Color</label>
+                          <div className="flex items-center gap-2">
+                            <input type="color" value={textColor} onChange={(e) => setTextColor(e.target.value)} className="w-8 h-8 rounded border border-[#353941] cursor-pointer bg-transparent" />
+                            <input type="text" value={textColor} onChange={(e) => setTextColor(e.target.value)} className="w-full bg-[#1a1d23] border border-[#353941] rounded p-1 text-[10px] text-gray-300" />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </motion.div>
+            )}
           </AnimatePresence>
         </div>
 
@@ -2310,8 +3327,8 @@ export default function App() {
         </div>
 
         {/* Preview Area */}
-        <div className="flex-1 flex flex-col items-center p-8 overflow-auto bg-[#0a0c10] gap-12">
-          {!isBulkMode ? (
+        <div className="flex-1 flex flex-col items-center p-8 overflow-auto bg-[#0a0c10] gap-12 text-white">
+          {(activeTab === 'pictext' ? !isPicTextBulk : !isBulkMode) ? (
             <div className="flex flex-col items-center gap-4">
               <div 
                 className="relative overflow-visible shadow-[0_40px_100px_-20px_rgba(0,0,0,0.5)] rounded-2xl" 
@@ -2326,6 +3343,43 @@ export default function App() {
                 />
               </div>
             </div>
+          ) : activeTab === 'pictext' ? (
+            picTextBulkStories.map((story, originalIndex) => {
+              const displayIndex = picTextBulkStories.slice(0, originalIndex).length;
+
+              return (
+                <div key={originalIndex} className="flex flex-col items-center gap-4 group/card">
+                  <div className="flex items-center gap-3 self-start w-[356px]">
+                    <div className="flex items-center gap-2">
+                       <div className="px-3 py-1 bg-[#1a1d23] border border-[#2a2d35] rounded-full text-[10px] font-bold text-blue-400 uppercase tracking-widest">
+                        PAGE #{displayIndex + 1}
+                      </div>
+                      <button 
+                        onClick={() => removePicTextBulkStory(originalIndex)}
+                        className="p-1.5 text-gray-600 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-all opacity-0 group-hover/card:opacity-100"
+                        title="Remove Page"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                    <div className="h-px flex-1 bg-gradient-to-r from-[#2a2d35] to-transparent" />
+                  </div>
+                  <div 
+                    className="relative overflow-visible shadow-[0_40px_100px_-20px_rgba(0,0,0,0.5)] rounded-2xl bulk-poster-card transition-transform duration-300 group-hover/card:scale-[1.01]" 
+                    style={{ width: '356px', height: '633px' }}
+                  >
+                    <Poster 
+                      {...posterProps} 
+                      storyText={story.text} 
+                      hColor={story.highlightColor}
+                      fSize={story.fontSize}
+                      storyImage={story.image}
+                      innerRef={originalIndex === 0 ? previewRef : null} 
+                    />
+                  </div>
+                </div>
+              );
+            })
           ) : (
             bulkStories.map((story, originalIndex) => {
               if (story.text.trim().length === 0) return null;
@@ -2335,7 +3389,7 @@ export default function App() {
 
               return (
                 <div key={originalIndex} className="flex flex-col items-center gap-4 group/card">
-                  <div className="flex items-center gap-3 self-start w-[356px]">
+                   <div className="flex items-center gap-3 self-start w-[356px]">
                     <div className="flex items-center gap-2">
                        <div className="px-3 py-1 bg-[#1a1d23] border border-[#2a2d35] rounded-full text-[10px] font-bold text-blue-400 uppercase tracking-widest">
                         CARD #{displayIndex + 1}
@@ -2367,10 +3421,11 @@ export default function App() {
             })
           )}
           
-          {isBulkMode && bulkStories.every(s => s.text.trim().length === 0) && (
+          {((isBulkMode && activeTab !== 'pictext') || (activeTab === 'pictext' && isPicTextBulk)) && 
+           (activeTab === 'pictext' ? picTextBulkStories.length === 0 : bulkStories.every(s => s.text.trim().length === 0)) && (
             <div className="flex flex-col items-center justify-center h-full text-gray-600 opacity-50">
               <Plus size={48} className="mb-4" />
-              <p className="font-bold text-lg">Input some stories to see cards</p>
+              <p className="font-bold text-lg">Input some entries to see pages</p>
             </div>
           )}
         </div>
@@ -2389,10 +3444,132 @@ function Poster({
   showFooter, footerFont, footerBgStyle, footerBgColor, footerTextColor, 
   footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor,
   bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly, hColor, removePaddingWhenHidden,
-  videoBackground, isExporting, boldParagraphIndex
+  videoBackground, isExporting, boldParagraphIndex,
+  storyImage, storyImageHeight, storyImageRadius, storyImageFit, isPicTextMode
 }: any) {
   const isCardPadded = showCard || !removePaddingWhenHidden;
   const isBlur = scribbleStyle === 'blur' || scribbleStyle === 'title-blur';
+
+  if (isPicTextMode) {
+    return (
+      <div 
+        ref={innerRef}
+        className="relative overflow-hidden flex flex-col h-full w-full"
+        style={{ 
+          width: '1080px', 
+          height: '1920px',
+          background: bgStyle === 'solid' ? bgColor : 
+                      bgStyle === 'gradient' ? `linear-gradient(to bottom, ${bgColor}, ${gradEnd})` : 
+                      '#000',
+          transform: 'scale(0.33)',
+          transformOrigin: 'top left',
+          position: 'absolute',
+          top: 0,
+          left: 0
+        }}
+      >
+        {storyImage ? (
+          <div 
+            className="w-full relative overflow-hidden flex-shrink-0"
+            style={{ 
+              height: `${storyImageHeight}px`,
+            }}
+          >
+            <img 
+              src={storyImage} 
+              alt="Story Media" 
+              className="w-full h-full"
+              style={{ 
+                objectFit: storyImageFit,
+              }}
+              referrerPolicy="no-referrer"
+            />
+          </div>
+        ) : (
+          <div 
+            className="w-full bg-[#1a1d23]/80 border-b border-[#2a2d35]/35 flex flex-col items-center justify-center flex-shrink-0"
+            style={{ height: `${storyImageHeight}px` }}
+          >
+            <span className="text-gray-400 text-3xl font-bold">No Image Uploaded</span>
+            <span className="text-gray-500 text-xl mt-2 uppercase tracking-widest">Please upload an image in the Picture & Text tab</span>
+          </div>
+        )}
+
+        <div 
+          className="w-full flex-1 flex flex-col px-16 py-12 select-text"
+          style={{
+            justifyContent: 'flex-start',
+            marginTop: '0px',
+            backgroundColor: 'transparent',
+          }}
+        >
+          <div 
+            className={cn(fontFamily, "w-full")}
+            style={{ 
+              fontSize: `${fSize}px`,
+              color: textColor || '#ffffff',
+              textAlign: textAlign || 'center',
+              lineHeight: lineHeight || 1.6,
+              letterSpacing: `${letterSpacing}px`,
+              fontWeight: fontWeight || 'normal',
+              fontStyle: fontStyle === 'italic' ? 'italic' : 'normal',
+            }}
+          >
+            {storyText.split('\n').map((para, index) => {
+              const isBold = index === boldParagraphIndex;
+              return (
+                <div 
+                  key={index}
+                  style={{
+                    fontWeight: isBold ? '800' : undefined,
+                    whiteSpace: 'pre-wrap',
+                    marginBottom: '1.5em'
+                  }}
+                >
+                  {para === '' ? <br /> : renderStoryText(para, hColor)}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {showFooter && (
+          <div 
+            className={cn(
+              "w-full flex justify-center z-10 absolute transition-all duration-300",
+              footerBgStyle === 'fill' ? "bottom-0" : "bottom-20"
+            )}
+            style={{ transform: `translateY(${footerMove}px)` }}
+          >
+            <div 
+              className={cn(
+                "py-6 px-12 rounded-lg text-center transition-all flex items-center justify-center gap-6", 
+                footerFont,
+                footerBgStyle === 'card' && "w-[calc(100%-128px)]",
+                footerBgStyle === 'fill' && "w-full py-12"
+              )}
+              style={{ 
+                backgroundColor: footerBgStyle === 'none' ? 'transparent' : 
+                                footerBgStyle === 'card' ? cardColor : 
+                                footerBgColor,
+                color: footerTextColor,
+                fontSize: `${footerFontSize}px`,
+                fontWeight: '800',
+                letterSpacing: '2px',
+                borderRadius: footerBgStyle === 'text' ? '12px' : '0',
+                border: footerBorderWidth > 0 ? `${footerBorderWidth}px solid ${footerBorderColor}` : 'none',
+                textTransform: 'uppercase',
+                boxShadow: footerBgStyle === 'none' ? 'none' : '0 10px 30px -5px rgba(0,0,0,0.1)'
+              }}
+            >
+              {footerText}
+              <MoveRight size={footerFontSize * 1.2} strokeWidth={3} />
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   const profileSection = (
     <div 
@@ -2565,6 +3742,28 @@ function Poster({
               transform: `translateY(${cardMove}px)`
             }}
           >
+            {/* Story/Top Image - Positioned Above and Outside the Card Section */}
+            {storyImage && (
+              <div 
+                className="w-full relative overflow-hidden mb-12 flex-shrink-0"
+                style={{ 
+                  height: `${storyImageHeight}px`,
+                  borderRadius: `${storyImageRadius}px`,
+                  boxShadow: showCard ? '0 30px 80px -15px rgba(0,0,0,0.15)' : 'none',
+                }}
+              >
+                <img 
+                  src={storyImage} 
+                  alt="Story Top Media" 
+                  className="w-full h-full"
+                  style={{ 
+                    objectFit: storyImageFit,
+                  }}
+                  referrerPolicy="no-referrer"
+                />
+              </div>
+            )}
+
             <div 
               className="w-full transition-all duration-300 flex flex-col"
               style={{
