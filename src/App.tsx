@@ -1511,65 +1511,80 @@ export default function App() {
                 exit={{ opacity: 0, x: 10 }}
                 className="space-y-6 pb-20"
               >
-                {!isBulkMode && (
-                  <>
-                    <div className="space-y-4">
-                      <div className="p-3 bg-[#2a2d35]/30 rounded-xl border border-[#2a2d35] space-y-2">
-                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block">Text Highlight Style</label>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-1">
-                            <label className="text-[10px] text-gray-500">Highlight</label>
-                            <div className="flex items-center gap-3">
-                              <input type="color" value={highlightColor} onChange={(e) => setHighlightColor(e.target.value)} className="w-12 h-12 rounded-xl border border-[#353941] cursor-pointer bg-transparent flex-shrink-0" />
-                              <input 
-                                type="text" 
-                                value={highlightColor} 
-                                onChange={(e) => setHighlightColor(e.target.value)} 
-                                className="w-full bg-[#1a1d23] border border-[#353941] rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-blue-500" 
-                                placeholder="#000"
-                              />
-                            </div>
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] text-gray-500">Box Background</label>
-                            <div className="flex items-center gap-3">
-                              <input type="color" value={customHighlightColor} onChange={(e) => setCustomHighlightColor(e.target.value)} className="w-12 h-12 rounded-xl border border-[#353941] cursor-pointer bg-transparent flex-shrink-0" />
-                              <input 
-                                type="text" 
-                                value={customHighlightColor} 
-                                onChange={(e) => setCustomHighlightColor(e.target.value)} 
-                                className="w-full bg-[#1a1d23] border border-[#353941] rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-blue-500" 
-                                placeholder="#000"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="p-3 bg-[#2a2d35]/30 rounded-xl border border-[#2a2d35] space-y-2">
-                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block">Default Text Color</label>
+                <div className="space-y-4">
+                  <div className="p-3 bg-[#2a2d35]/30 rounded-xl border border-[#2a2d35] space-y-2">
+                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block">Text Highlight Style</label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-gray-500">Highlight</label>
                         <div className="flex items-center gap-3">
-                          <input type="color" value={textColor} onChange={(e) => setTextColor(e.target.value)} className="w-12 h-12 rounded-xl border border-[#353941] cursor-pointer bg-transparent flex-shrink-0" />
+                          <input 
+                            type="color" 
+                            value={highlightColor} 
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setHighlightColor(val);
+                              if (isBulkMode) {
+                                setBulkStories(prev => prev.map(s => ({ ...s, highlightColor: val })));
+                              }
+                            }} 
+                            className="w-12 h-12 rounded-xl border border-[#353941] cursor-pointer bg-transparent flex-shrink-0" 
+                          />
                           <input 
                             type="text" 
-                            value={textColor} 
-                            onChange={(e) => setTextColor(e.target.value)} 
-                            className="flex-1 bg-[#1a1d23] border border-[#353941] rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-blue-500" 
-                            placeholder="#000000"
+                            value={highlightColor} 
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setHighlightColor(val);
+                              if (isBulkMode) {
+                                setBulkStories(prev => prev.map(s => ({ ...s, highlightColor: val })));
+                              }
+                            }} 
+                            className="w-full bg-[#1a1d23] border border-[#353941] rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-blue-500" 
+                            placeholder="#000"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-gray-500">Box Background</label>
+                        <div className="flex items-center gap-3">
+                          <input type="color" value={customHighlightColor} onChange={(e) => setCustomHighlightColor(e.target.value)} className="w-12 h-12 rounded-xl border border-[#353941] cursor-pointer bg-transparent flex-shrink-0" />
+                          <input 
+                            type="text" 
+                            value={customHighlightColor} 
+                            onChange={(e) => setCustomHighlightColor(e.target.value)} 
+                            className="w-full bg-[#1a1d23] border border-[#353941] rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-blue-500" 
+                            placeholder="#000"
                           />
                         </div>
                       </div>
                     </div>
-
-                    <div className="grid grid-cols-1">
-                      <button 
-                        onClick={() => handleRandomHighlight()}
-                        className="w-full flex items-center justify-center gap-2 bg-[#8ab4f8] hover:bg-[#a1c2fa] text-black font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98] mt-2"
-                      >
-                        <Zap size={16} /> HIGHLIGHT TEXT
-                      </button>
-                      <p className="text-[10px] text-gray-500 text-center mt-2 italic px-4">Click to randomly highlight parts of your story with the selected style.</p>
+                  </div>
+                  <div className="p-3 bg-[#2a2d35]/30 rounded-xl border border-[#2a2d35] space-y-2">
+                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block">Default Text Color</label>
+                    <div className="flex items-center gap-3">
+                      <input type="color" value={textColor} onChange={(e) => setTextColor(e.target.value)} className="w-12 h-12 rounded-xl border border-[#353941] cursor-pointer bg-transparent flex-shrink-0" />
+                      <input 
+                        type="text" 
+                        value={textColor} 
+                        onChange={(e) => setTextColor(e.target.value)} 
+                        className="flex-1 bg-[#1a1d23] border border-[#353941] rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-blue-500" 
+                        placeholder="#000000"
+                      />
                     </div>
-                  </>
+                  </div>
+                </div>
+
+                {!isBulkMode && (
+                  <div className="grid grid-cols-1">
+                    <button 
+                      onClick={() => handleRandomHighlight()}
+                      className="w-full flex items-center justify-center gap-2 bg-[#8ab4f8] hover:bg-[#a1c2fa] text-black font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98] mt-2"
+                    >
+                      <Zap size={16} /> HIGHLIGHT TEXT
+                    </button>
+                    <p className="text-[10px] text-gray-500 text-center mt-2 italic px-4">Click to randomly highlight parts of your story with the selected style.</p>
+                  </div>
                 )}
 
                 <div className="text-center font-bold text-[10px] text-gray-600 tracking-widest border-t border-b border-[#2a2d35] py-2 uppercase">
