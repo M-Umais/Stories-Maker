@@ -36,6 +36,53 @@ import Papa from 'papaparse';
 
 type TabType = 'profile' | 'typography' | 'background' | 'footer' | 'pictext';
 
+// Background-safe high-precision delay using a singleton Web Worker to avoid browser background throttling
+let timingWorker: Worker | null = null;
+let timingWorkerUrl: string | null = null;
+let timingNextId = 0;
+const timingCallbacks = new Map<number, () => void>();
+
+const getTimingWorker = () => {
+  if (!timingWorker && typeof Worker !== 'undefined') {
+    const workerCode = `
+      self.onmessage = function(e) {
+        if (e.data.type === 'delay') {
+          setTimeout(() => {
+            self.postMessage({ id: e.data.id });
+          }, e.data.ms);
+        }
+      };
+    `;
+    const blob = new Blob([workerCode], { type: 'text/javascript' });
+    timingWorkerUrl = URL.createObjectURL(blob);
+    timingWorker = new Worker(timingWorkerUrl);
+    timingWorker.onmessage = (e) => {
+      const cb = timingCallbacks.get(e.data.id);
+      if (cb) {
+        timingCallbacks.delete(e.data.id);
+        cb();
+      }
+    };
+  }
+  return timingWorker;
+};
+
+const bgDelay = (ms: number): Promise<void> => {
+  if (typeof Worker === 'undefined') {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+  return new Promise((resolve) => {
+    const worker = getTimingWorker();
+    if (!worker) {
+      setTimeout(resolve, ms);
+      return;
+    }
+    const id = timingNextId++;
+    timingCallbacks.set(id, resolve);
+    worker.postMessage({ type: 'delay', id, ms });
+  });
+};
+
 // Helper to highlight random words while keeping double-bracket [[box backgrounds]] completely intact
 const getRandomHighlights = (text: string) => {
   const segments = text.split(/(\[\[.*?\]\])/).map(part => ({
@@ -96,6 +143,16 @@ export default function App() {
   const [exportProgress, setExportProgress] = useState(0);
   const [bulkExportInfo, setBulkExportInfo] = useState('');
 
+  const cancelExportRef = useRef(false);
+
+  const handleCancelExport = useCallback(() => {
+    cancelExportRef.current = true;
+    setIsExporting(false);
+    setExportProgress(0);
+    setBulkExportInfo('');
+    setIsExportModalOpen(false);
+  }, []);
+
   const getSupportedMimeType = useCallback(() => {
     const types = [
       'video/mp4;codecs=avc1,mp4a.40.2',
@@ -133,6 +190,8 @@ export default function App() {
     offscreen.height = height;
     const ctx = offscreen.getContext('2d', { alpha: false });
     if (!ctx) throw new Error('Could not get offscreen canvas context');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
 
     // Create a temporary video element for source frames if a video URL is provided
     let video: HTMLVideoElement | null = null;
@@ -141,7 +200,17 @@ export default function App() {
       video.src = videoUrl;
       video.crossOrigin = 'anonymous';
       video.muted = true;
-      video.play(); // Start playing so we can capture frames
+      video.playsInline = true;
+      video.style.position = 'fixed';
+      video.style.left = '-9999px';
+      video.style.top = '-9999px';
+      video.style.width = '1px';
+      video.style.height = '1px';
+      video.style.opacity = '0.001';
+      video.style.pointerEvents = 'none';
+      document.body.appendChild(video);
+      
+      video.play().catch(e => console.log('Video background play started: ', e)); // Start playing so we can capture frames
       await new Promise((resolve) => {
         video!.onloadeddata = resolve;
       });
@@ -186,7 +255,8 @@ export default function App() {
         codec,
         width,
         height,
-        bitrate: 6_000_000,
+        bitrate: 16_000_000, // 16 Mbps for high-quality distortion-free videos
+        latencyMode: 'quality', // Trade compression latency for absolute visual clarity and sharpness
         avc: { format: 'avc' } // 'avc' (AVCC) is standard for MP4
       };
       
@@ -220,245 +290,44 @@ export default function App() {
       encoder.configure(config);
     }
 
-    for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
-      if (encoderError) throw encoderError;
-      if (encoder.state === 'closed') throw new Error('Encoder closed unexpectedly');
-
-      const timestamp = (frameIndex * 1000000) / fps;
-      
-      // Clear canvas
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, width, height);
-
-      // 1. Draw video background
-      if (video) {
-        // Sync video time
-        video.currentTime = (frameIndex / fps) % video.duration;
-        
-        await new Promise(r => {
-          const onSeeked = () => {
-            video!.removeEventListener('seeked', onSeeked);
-            r(null);
-          };
-          video!.addEventListener('seeked', onSeeked);
-          // Safety timeout
-          setTimeout(r, 100);
-        });
-        
-        // Draw video with "cover" logic
-        const videoAspect = video.videoWidth / video.videoHeight;
-        const canvasAspect = width / height;
-        let drawW = width;
-        let drawH = height;
-        let drawX = 0;
-        let drawY = 0;
-
-        if (videoAspect > canvasAspect) {
-          drawW = height * videoAspect;
-          drawX = (width - drawW) / 2;
-        } else {
-          drawH = width / videoAspect;
-          drawY = (height - drawH) / 2;
-        }
-        ctx.drawImage(video, drawX, drawY, drawW, drawH);
-
-        // Apply overlay if needed
-        if (overlayOpacity > 0) {
-          ctx.fillStyle = `rgba(0, 0, 0, ${overlayOpacity / 100})`;
-          ctx.fillRect(0, 0, width, height);
-        }
-      }
-
-      // 2. Draw UI snapshot on top
-      ctx.drawImage(canvas, 0, 0, width, height);
-
-      // We create a new VideoFrame using the offscreen canvas. 
-      const frame = new VideoFrame(offscreen, { 
-        timestamp,
-        visibleRect: { x: 0, y: 0, width, height },
-        displayWidth: width,
-        displayHeight: height
-      });
-      
-      encoder.encode(frame, { keyFrame: frameIndex % 30 === 0 }); // Keyframe every second
-      frame.close();
-
-      if (onProgress) {
-        onProgress(Math.floor((frameIndex / totalFrames) * 100));
-      }
-
-      // We need to wait for the encoder to process. Too much pressure can cause stalls.
-      if (frameIndex % 5 === 0) {
-        await new Promise(r => setTimeout(r, 0));
-        // Also check if we need to flush to keep memory low
-        if (frameIndex % 60 === 0) {
-          await encoder.flush();
-        }
-      }
-    }
-
-    await encoder.flush();
-    encoder.close(); // Close the encoder after we are done
-
-    // Encode audio if uploaded
-    let audioEncoderError: Error | null = null;
-    let audioEncoder: AudioEncoder | null = null;
-    if (uploadedMusicBuffer) {
-      audioEncoder = new AudioEncoder({
-        output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
-        error: (e) => {
-          console.error('AudioEncoder error:', e);
-          audioEncoderError = e;
-        }
-      });
-
-      audioEncoder.configure({
-        codec: 'mp4a.40.2',
-        numberOfChannels: uploadedMusicBuffer.numberOfChannels,
-        sampleRate: uploadedMusicBuffer.sampleRate,
-        bitrate: 128000
-      });
-
-      const sampleRate = uploadedMusicBuffer.sampleRate;
-      const numberOfChannels = uploadedMusicBuffer.numberOfChannels;
-      const chunkFrames = 1024;
-      const totalSamples = Math.floor(duration * sampleRate);
-
-      for (let offset = 0; offset < totalSamples; offset += chunkFrames) {
-        if (audioEncoderError) throw audioEncoderError;
-        const currentChunkSize = Math.min(chunkFrames, totalSamples - offset);
-        const chunkData = new Float32Array(currentChunkSize * numberOfChannels);
-        
-        for (let channel = 0; channel < numberOfChannels; channel++) {
-          const channelData = uploadedMusicBuffer.getChannelData(channel);
-          for (let i = 0; i < currentChunkSize; i++) {
-            const sourceIndex = (offset + i) % channelData.length;
-            chunkData[channel * currentChunkSize + i] = channelData[sourceIndex];
-          }
-        }
-
-        const timestamp = Math.floor((offset / sampleRate) * 1000000); // microseconds
-        const audioData = new AudioData({
-          format: 'f32-planar',
-          sampleRate: sampleRate,
-          numberOfFrames: currentChunkSize,
-          numberOfChannels: numberOfChannels,
-          timestamp: timestamp,
-          data: chunkData
-        });
-
-        audioEncoder.encode(audioData);
-        audioData.close();
-      }
-
-      await audioEncoder.flush();
-      audioEncoder.close();
-    }
-
-    muxer.finalize();
-    
-    // Convert ArrayBuffer to Blob
-    const buffer = muxer.target.buffer;
-    if (!buffer || buffer.byteLength === 0) {
-      throw new Error('Exported video is empty');
-    }
-    return new Blob([buffer], { type: 'video/mp4' });
-  };
-
-  const recordWithFallback = async (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0) => {
-    if ('VideoEncoder' in window) {
-      try {
-        return await recordCanvasToMp4(canvas, duration, onProgress, videoUrl, overlayOpacity);
-      } catch (err) {
-        console.error('VideoEncoder failed, falling back to MediaRecorder:', err);
-      }
-    }
-    return await recordCanvasMediaRecorder(canvas, duration, onProgress, videoUrl, overlayOpacity);
-  };
-
-  const recordCanvasMediaRecorder = (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0): Promise<Blob> => {
-    return new Promise(async (resolve) => {
-      const width = canvas.width;
-      const height = canvas.height;
-      const offscreen = document.createElement('canvas');
-      offscreen.width = width;
-      offscreen.height = height;
-      const ctx = offscreen.getContext('2d', { alpha: false });
-      if (!ctx) throw new Error('Could not get offscreen canvas context');
-
-      let video: HTMLVideoElement | null = null;
-      if (videoUrl) {
-        video = document.createElement('video');
-        video.src = videoUrl;
-        video.crossOrigin = 'anonymous';
-        video.muted = true;
-        video.play();
-        await new Promise((r) => { video!.onloadeddata = r; });
-      }
-
-      let audio: HTMLAudioElement | null = null;
-      const stream = offscreen.captureStream(30);
-
-      if (uploadedMusicUrl) {
-        audio = document.createElement('audio');
-        audio.src = uploadedMusicUrl;
-        audio.crossOrigin = 'anonymous';
-        audio.loop = true;
-        audio.volume = 1.0;
-        try {
-          audio.play().catch(e => console.log('Autoplay blocked in media recorder:', e));
-          const audioStream = (audio as any).captureStream ? (audio as any).captureStream() : (audio as any).mozCaptureStream ? (audio as any).mozCaptureStream() : null;
-          if (audioStream) {
-            const audioTrack = audioStream.getAudioTracks()[0];
-            if (audioTrack) {
-              stream.addTrack(audioTrack);
-            }
-          }
-        } catch (e) {
-          console.error("Failed to attach audio track to media recorder fallback:", e);
-        }
-      }
-
-      const mimeType = getSupportedMimeType();
-      const mediaRecorder = new MediaRecorder(stream, { 
-        mimeType,
-        videoBitsPerSecond: 12000000 // Higher bit rate for composited video
-      });
-      const chunks: Blob[] = [];
-
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.push(e.data);
-      };
-
-      mediaRecorder.onstop = () => {
-        if (audio) {
-          audio.pause();
-          audio.remove();
-        }
-        resolve(new Blob(chunks, { type: mimeType }));
-      };
-
-      mediaRecorder.start();
-      
-      const fps = 30;
-      const totalFrames = duration * fps;
-      
+    try {
       for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
-        // Clear and Draw
+        if (cancelExportRef.current) {
+          throw new Error('Export cancelled');
+        }
+        if (encoderError) throw encoderError;
+        if (encoder.state === 'closed') throw new Error('Encoder closed unexpectedly');
+
+        const timestamp = (frameIndex * 1000000) / fps;
+        
+        // Clear canvas
         ctx.fillStyle = '#000';
         ctx.fillRect(0, 0, width, height);
 
+        // 1. Draw video background
         if (video) {
+          // Sync video time
           video.currentTime = (frameIndex / fps) % video.duration;
+          
           await new Promise(r => {
+            let done = false;
             const onSeeked = () => {
+              if (done) return;
+              done = true;
               video!.removeEventListener('seeked', onSeeked);
               r(null);
             };
             video!.addEventListener('seeked', onSeeked);
-            setTimeout(r, 100);
+            // Safety timeout using background-safe delay
+            bgDelay(100).then(() => {
+              if (done) return;
+              done = true;
+              video!.removeEventListener('seeked', onSeeked);
+              r(null);
+            });
           });
           
+          // Draw video with "cover" logic
           const videoAspect = video.videoWidth / video.videoHeight;
           const canvasAspect = width / height;
           let drawW = width;
@@ -475,21 +344,303 @@ export default function App() {
           }
           ctx.drawImage(video, drawX, drawY, drawW, drawH);
 
+          // Apply overlay if needed
           if (overlayOpacity > 0) {
             ctx.fillStyle = `rgba(0, 0, 0, ${overlayOpacity / 100})`;
             ctx.fillRect(0, 0, width, height);
           }
         }
 
+        // 2. Draw UI snapshot on top
         ctx.drawImage(canvas, 0, 0, width, height);
+
+        // We create a new VideoFrame using the offscreen canvas. 
+        const frame = new VideoFrame(offscreen, { 
+          timestamp,
+          visibleRect: { x: 0, y: 0, width, height },
+          displayWidth: width,
+          displayHeight: height
+        });
         
-        if (onProgress) onProgress(Math.floor((frameIndex / totalFrames) * 100));
-        
-        // Small delay to allow stream to capture
-        await new Promise(r => setTimeout(r, 1000/fps));
+        encoder.encode(frame, { keyFrame: frameIndex % 30 === 0 }); // Keyframe every second
+        frame.close();
+
+        if (onProgress) {
+          onProgress(Math.floor((frameIndex / totalFrames) * 100));
+        }
+
+        // We need to wait for the encoder to process. Too much pressure can cause stalls.
+        if (frameIndex % 5 === 0) {
+          await bgDelay(0);
+          // Also check if we need to flush to keep memory low
+          if (frameIndex % 60 === 0) {
+            await encoder.flush();
+          }
+        }
       }
 
-      mediaRecorder.stop();
+      await encoder.flush();
+      encoder.close(); // Close the encoder after we are done
+
+      // Encode audio if uploaded
+      let audioEncoderError: Error | null = null;
+      let audioEncoder: AudioEncoder | null = null;
+      if (uploadedMusicBuffer) {
+        audioEncoder = new AudioEncoder({
+          output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+          error: (e) => {
+            console.error('AudioEncoder error:', e);
+            audioEncoderError = e;
+          }
+        });
+
+        audioEncoder.configure({
+          codec: 'mp4a.40.2',
+          numberOfChannels: uploadedMusicBuffer.numberOfChannels,
+          sampleRate: uploadedMusicBuffer.sampleRate,
+          bitrate: 128000
+        });
+
+        const sampleRate = uploadedMusicBuffer.sampleRate;
+        const numberOfChannels = uploadedMusicBuffer.numberOfChannels;
+        const chunkFrames = 1024;
+        const totalSamples = Math.floor(duration * sampleRate);
+
+        for (let offset = 0; offset < totalSamples; offset += chunkFrames) {
+          if (cancelExportRef.current) {
+            throw new Error('Export cancelled');
+          }
+          if (audioEncoderError) throw audioEncoderError;
+          const currentChunkSize = Math.min(chunkFrames, totalSamples - offset);
+          const chunkData = new Float32Array(currentChunkSize * numberOfChannels);
+          
+          for (let channel = 0; channel < numberOfChannels; channel++) {
+            const channelData = uploadedMusicBuffer.getChannelData(channel);
+            for (let i = 0; i < currentChunkSize; i++) {
+              const sourceIndex = (offset + i) % channelData.length;
+              chunkData[channel * currentChunkSize + i] = channelData[sourceIndex];
+            }
+          }
+
+          const timestamp = Math.floor((offset / sampleRate) * 1000000); // microseconds
+          const audioData = new AudioData({
+            format: 'f32-planar',
+            sampleRate: sampleRate,
+            numberOfFrames: currentChunkSize,
+            numberOfChannels: numberOfChannels,
+            timestamp: timestamp,
+            data: chunkData
+          });
+
+          audioEncoder.encode(audioData);
+          audioData.close();
+        }
+
+        await audioEncoder.flush();
+        audioEncoder.close();
+      }
+
+      muxer.finalize();
+      
+      // Convert ArrayBuffer to Blob
+      const buffer = muxer.target.buffer;
+      if (!buffer || buffer.byteLength === 0) {
+        throw new Error('Exported video is empty');
+      }
+      return new Blob([buffer], { type: 'video/mp4' });
+
+    } catch (err) {
+      try {
+        if (encoder.state !== 'closed') {
+          encoder.close();
+        }
+      } catch (e) {}
+      throw err;
+    } finally {
+      if (video) {
+        video.pause();
+        video.remove();
+      }
+    }
+  };
+
+  const recordWithFallback = async (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0) => {
+    if ('VideoEncoder' in window) {
+      try {
+        return await recordCanvasToMp4(canvas, duration, onProgress, videoUrl, overlayOpacity);
+      } catch (err) {
+        console.error('VideoEncoder failed, falling back to MediaRecorder:', err);
+      }
+    }
+    return await recordCanvasMediaRecorder(canvas, duration, onProgress, videoUrl, overlayOpacity);
+  };
+
+  const recordCanvasMediaRecorder = (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0): Promise<Blob> => {
+    return new Promise(async (resolve, reject) => {
+      const width = canvas.width;
+      const height = canvas.height;
+      const offscreen = document.createElement('canvas');
+      offscreen.width = width;
+      offscreen.height = height;
+      const ctx = offscreen.getContext('2d', { alpha: false });
+      if (!ctx) throw new Error('Could not get offscreen canvas context');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+
+      let video: HTMLVideoElement | null = null;
+      let audio: HTMLAudioElement | null = null;
+
+      try {
+        if (videoUrl) {
+          video = document.createElement('video');
+          video.src = videoUrl;
+          video.crossOrigin = 'anonymous';
+          video.muted = true;
+          video.playsInline = true;
+          video.style.position = 'fixed';
+          video.style.left = '-9999px';
+          video.style.top = '-9999px';
+          video.style.width = '1px';
+          video.style.height = '1px';
+          video.style.opacity = '0.001';
+          video.style.pointerEvents = 'none';
+          document.body.appendChild(video);
+          
+          video.play().catch(e => console.log('Video background fallback play error:', e));
+          await new Promise((r) => { video!.onloadeddata = r; });
+        }
+
+        const stream = offscreen.captureStream(30);
+
+        if (uploadedMusicUrl) {
+          audio = document.createElement('audio');
+          audio.src = uploadedMusicUrl;
+          audio.crossOrigin = 'anonymous';
+          audio.loop = true;
+          audio.volume = 1.0;
+          try {
+            audio.play().catch(e => console.log('Autoplay blocked in media recorder:', e));
+            const audioStream = (audio as any).captureStream ? (audio as any).captureStream() : (audio as any).mozCaptureStream ? (audio as any).mozCaptureStream() : null;
+            if (audioStream) {
+              const audioTrack = audioStream.getAudioTracks()[0];
+              if (audioTrack) {
+                stream.addTrack(audioTrack);
+              }
+            }
+          } catch (e) {
+            console.error("Failed to attach audio track to media recorder fallback:", e);
+          }
+        }
+
+        const mimeType = getSupportedMimeType();
+        const mediaRecorder = new MediaRecorder(stream, { 
+          mimeType,
+          videoBitsPerSecond: 16000000 // High 16 Mbps bit rate for maximum visual quality and text sharpness
+        });
+        const chunks: Blob[] = [];
+
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) chunks.push(e.data);
+        };
+
+        const onStopPromise = new Promise<Blob>((resolveStop) => {
+          mediaRecorder.onstop = () => {
+            if (audio) {
+              audio.pause();
+              audio.remove();
+              audio = null;
+            }
+            resolveStop(new Blob(chunks, { type: mimeType }));
+          };
+        });
+
+        mediaRecorder.start();
+        
+        const fps = 30;
+        const totalFrames = duration * fps;
+        
+        for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
+          if (cancelExportRef.current) {
+            try {
+              if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+              }
+            } catch (e) {}
+            throw new Error('Export cancelled');
+          }
+          // Clear and Draw
+          ctx.fillStyle = '#000';
+          ctx.fillRect(0, 0, width, height);
+
+          if (video) {
+            video.currentTime = (frameIndex / fps) % video.duration;
+            await new Promise(r => {
+              let done = false;
+              const onSeeked = () => {
+                if (done) return;
+                done = true;
+                video!.removeEventListener('seeked', onSeeked);
+                r(null);
+              };
+              video!.addEventListener('seeked', onSeeked);
+              // Use background-safe high precision timer for the safety duration
+              bgDelay(100).then(() => {
+                if (done) return;
+                done = true;
+                video!.removeEventListener('seeked', onSeeked);
+                r(null);
+              });
+            });
+            
+            const videoAspect = video.videoWidth / video.videoHeight;
+            const canvasAspect = width / height;
+            let drawW = width;
+            let drawH = height;
+            let drawX = 0;
+            let drawY = 0;
+
+            if (videoAspect > canvasAspect) {
+              drawW = height * videoAspect;
+              drawX = (width - drawW) / 2;
+            } else {
+              drawH = width / videoAspect;
+              drawY = (height - drawH) / 2;
+            }
+            ctx.drawImage(video, drawX, drawY, drawW, drawH);
+
+            if (overlayOpacity > 0) {
+              ctx.fillStyle = `rgba(0, 0, 0, ${overlayOpacity / 100})`;
+              ctx.fillRect(0, 0, width, height);
+            }
+          }
+
+          ctx.drawImage(canvas, 0, 0, width, height);
+          
+          if (onProgress) onProgress(Math.floor((frameIndex / totalFrames) * 100));
+          
+          // Small delay to allow stream to capture - using background safe wait
+          await bgDelay(1000/fps);
+        }
+
+        mediaRecorder.stop();
+        const recordedBlob = await onStopPromise;
+        resolve(recordedBlob);
+
+      } catch (error) {
+        console.error("Error drawing and recording video fallbacks:", error);
+        reject(error);
+      } finally {
+        if (video) {
+          video.pause();
+          video.remove();
+          video = null;
+        }
+        if (audio) {
+          audio.pause();
+          audio.remove();
+          audio = null;
+        }
+      }
     });
   };
   
@@ -1022,6 +1173,7 @@ export default function App() {
     const cardElements = document.querySelectorAll('.bulk-poster-card');
     if (cardElements.length === 0) return;
 
+    cancelExportRef.current = false;
     setIsExporting(true);
     setExportProgress(0);
     setBulkExportInfo(`Initializing bulk export...`);
@@ -1032,64 +1184,91 @@ export default function App() {
     const total = cardElements.length;
     
     // Wait for UI to update (hide video backgrounds)
-    await new Promise(r => setTimeout(r, 500));
-    
-    for (let i = 0; i < total; i++) {
-      const node = cardElements[i] as HTMLElement;
-      setBulkExportInfo(`Exporting Card ${i + 1} of ${total}`);
+    try {
+      await new Promise(r => setTimeout(r, 500));
+      if (cancelExportRef.current) throw new Error('Export cancelled');
       
-      const blob = await new Promise<Blob>((resolve, reject) => {
-        toCanvas(node, {
-          pixelRatio: 1,
-          cacheBust: true,
-          style: {
-            transform: 'scale(1)',
-            transformOrigin: 'top left',
-            width: '1080px',
-            height: '1920px'
-          }
-        }).then(async (canvas) => {
-          try {
-            const videoBlob = await recordWithFallback(canvas, exportDuration, (cardProgress) => {
-              const overallProgress = Math.floor(((i + (cardProgress / 100)) / total) * 100);
-              setExportProgress(overallProgress);
-            }, videoBackground, bgImageOverlay);
-            resolve(videoBlob);
-          } catch (err) {
-            console.error('Bulk export error:', err);
-            reject(err);
-          }
-        }).catch(reject);
-      });
+      for (let i = 0; i < total; i++) {
+        if (cancelExportRef.current) throw new Error('Export cancelled');
+        const node = cardElements[i] as HTMLElement;
+        setBulkExportInfo(`Exporting Card ${i + 1} of ${total}`);
+        
+        const blob = await new Promise<Blob>((resolve, reject) => {
+          toCanvas(node, {
+            pixelRatio: 1,
+            cacheBust: true,
+            width: 1080,
+            height: 1920,
+            style: {
+              transform: 'scale(1)',
+              transformOrigin: 'top left',
+              width: '1080px',
+              height: '1920px'
+            }
+          }).then(async (canvas) => {
+            try {
+              if (cancelExportRef.current) {
+                reject(new Error('Export cancelled'));
+                return;
+              }
+              const videoBlob = await recordWithFallback(canvas, exportDuration, (cardProgress) => {
+                if (cancelExportRef.current) {
+                  reject(new Error('Export cancelled'));
+                  return;
+                }
+                const overallProgress = Math.floor(((i + (cardProgress / 100)) / total) * 100);
+                setExportProgress(overallProgress);
+              }, videoBackground, bgImageOverlay);
+              resolve(videoBlob);
+            } catch (err) {
+              console.error('Bulk export error:', err);
+              reject(err);
+            }
+          }).catch(reject);
+        });
 
-      const extension = blob.type.includes('mp4') ? 'mp4' : 'webm';
-      zip.file(`story-${i + 1}.${extension}`, blob);
+        if (cancelExportRef.current) throw new Error('Export cancelled');
+        const extension = blob.type.includes('mp4') ? 'mp4' : 'webm';
+        zip.file(`story-${i + 1}.${extension}`, blob);
+      }
+      
+      if (cancelExportRef.current) throw new Error('Export cancelled');
+      setBulkExportInfo('Generating ZIP file...');
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(zipBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `bulk-stories-${Date.now()}.zip`;
+      link.click();
+      
+      setIsExporting(false);
+      setExportProgress(0);
+      setBulkExportInfo('');
+      setIsExportModalOpen(false);
+    } catch (err: any) {
+      if (err instanceof Error && err.message === 'Export cancelled') {
+        console.log('Bulk export cancelled by user');
+      } else {
+        console.error('Bulk export failed', err);
+      }
+      setIsExporting(false);
+      setExportProgress(0);
+      setBulkExportInfo('');
     }
-    
-    setBulkExportInfo('Generating ZIP file...');
-    const zipBlob = await zip.generateAsync({ type: 'blob' });
-    const url = URL.createObjectURL(zipBlob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `bulk-stories-${Date.now()}.zip`;
-    link.click();
-    
-    setIsExporting(false);
-    setExportProgress(0);
-    setBulkExportInfo('');
-    setIsExportModalOpen(false);
   }, [exportDuration]);
 
   const handleDownload = useCallback(async (type: 'image' | 'video' = 'image') => {
     if (previewRef.current === null) return;
     const node = previewRef.current;
     
+    cancelExportRef.current = false;
     setIsExporting(true);
     
     // const { toPng, toCanvas } = await import('html-to-image');
     
     if (type === 'image') {
       setTimeout(() => {
+        if (cancelExportRef.current) return;
         toPng(node, { 
           cacheBust: true,
           pixelRatio: 2,
@@ -1098,12 +1277,14 @@ export default function App() {
           }
         })
         .then((dataUrl) => {
+          if (cancelExportRef.current) return;
           const link = document.createElement('a');
           link.download = `story-image-${Date.now()}.png`;
           link.href = dataUrl;
           link.click();
           
           setTimeout(() => {
+            if (cancelExportRef.current) return;
             setIsExporting(false);
             setIsExportModalOpen(false);
           }, 500);
@@ -1118,9 +1299,12 @@ export default function App() {
       setExportProgress(0);
       
       setTimeout(() => {
+        if (cancelExportRef.current) return;
         toCanvas(node, { 
         pixelRatio: 1,
         cacheBust: true,
+        width: 1080,
+        height: 1920,
         style: {
           transform: 'scale(1)',
           transformOrigin: 'top left',
@@ -1130,10 +1314,18 @@ export default function App() {
       })
         .then(async (canvas) => {
           try {
+            if (cancelExportRef.current) {
+              throw new Error('Export cancelled');
+            }
             const blob = await recordWithFallback(canvas, exportDuration, (p) => {
+              if (cancelExportRef.current) return;
               setExportProgress(p);
             }, videoBackground, bgImageOverlay);
             
+            if (cancelExportRef.current) {
+              throw new Error('Export cancelled');
+            }
+
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
             const extension = blob.type.includes('mp4') ? 'mp4' : 'webm';
@@ -1144,21 +1336,29 @@ export default function App() {
             setExportProgress(0);
             setIsExporting(false);
             setIsExportModalOpen(false);
-          } catch (err) {
-            console.error('Video export failed', err);
-            alert('Video export failed. Your browser might not support high-quality export or the canvas is too large.');
+          } catch (err: any) {
+            if (err instanceof Error && err.message === 'Export cancelled') {
+              console.log('Video export cancelled by user');
+            } else {
+              console.error('Video export failed', err);
+              alert('Video export failed. Your browser might not support high-quality export or the canvas is too large.');
+            }
             setIsExporting(false);
             setExportProgress(0);
           }
         })
-        .catch((err) => {
-          console.error('Video export failed', err);
+        .catch((err: any) => {
+          if (err instanceof Error && err.message === 'Export cancelled') {
+            console.log('Video export cancelled');
+          } else {
+            console.error('Video export failed', err);
+          }
           setIsExporting(false);
           setExportProgress(0);
         });
       }, 500);
     }
-  }, [previewRef, exportDuration]);
+  }, [previewRef, exportDuration, videoBackground, bgImageOverlay]);
   
   const handleRandomHighlight = (index?: number) => {
     if (activeTab === 'pictext' && isPicTextBulk && typeof index === 'number') {
@@ -1493,7 +1693,7 @@ export default function App() {
                   <div className="w-5 h-5 bg-white text-black text-[10px] font-bold flex items-center justify-center rounded">V</div>
                   <h2 className="text-sm font-bold tracking-tight">Export Story</h2>
                 </div>
-                <button onClick={() => setIsExportModalOpen(false)} className="text-gray-500 hover:text-white transition-colors">
+                <button onClick={isExporting ? handleCancelExport : () => setIsExportModalOpen(false)} className="text-gray-500 hover:text-white transition-colors">
                   <X size={18} />
                 </button>
               </div>
@@ -1595,14 +1795,21 @@ export default function App() {
                   </div>
                 </div>
 
-                <button 
-                  onClick={() => !isExporting && handleDownload('video')}
-                  disabled={isExporting}
-                  className="w-full flex items-center justify-center gap-2 bg-[#8ab4f8] hover:bg-[#a1c2fa] text-black font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isExporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
-                  {isExporting ? `Exporting (${exportProgress}%)...` : 'Export Video'}
-                </button>
+                {isExporting ? (
+                  <button 
+                    onClick={handleCancelExport}
+                    className="w-full flex items-center justify-center gap-2 bg-red-600 hover:bg-red-500 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98]"
+                  >
+                    <X size={18} /> Cancel Download
+                  </button>
+                ) : (
+                  <button 
+                    onClick={() => handleDownload('video')}
+                    className="w-full flex items-center justify-center gap-2 bg-[#8ab4f8] hover:bg-[#a1c2fa] text-black font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98]"
+                  >
+                    <Download size={18} /> Export Video
+                  </button>
+                )}
               </div>
             </motion.div>
           </div>
