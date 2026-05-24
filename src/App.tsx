@@ -9,6 +9,8 @@ import {
   RotateCcw, 
   Save, 
   ChevronDown,
+  ChevronUp,
+  Copy,
   Upload,
   Zap,
   X,
@@ -516,12 +518,44 @@ export default function App() {
     setBulkStories(prev => [...prev, {
       text: '',
       fontSize: 62,
-      highlightColor: highlightColor
+      highlightColor: highlightColor,
+      boxHighlight: false
     }]);
   };
 
   const removeBulkStory = (index: number) => {
     setBulkStories(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const duplicateBulkStory = (index: number) => {
+    setBulkStories(prev => {
+      const copy = [...prev];
+      const copyOfItem = { ...copy[index] };
+      copy.splice(index + 1, 0, copyOfItem);
+      return copy;
+    });
+  };
+
+  const moveBulkStoryUp = (index: number) => {
+    if (index === 0) return;
+    setBulkStories(prev => {
+      const copy = [...prev];
+      const temp = copy[index];
+      copy[index] = copy[index - 1];
+      copy[index - 1] = temp;
+      return copy;
+    });
+  };
+
+  const moveBulkStoryDown = (index: number) => {
+    setBulkStories(prev => {
+      if (index === prev.length - 1) return prev;
+      const copy = [...prev];
+      const temp = copy[index];
+      copy[index] = copy[index + 1];
+      copy[index + 1] = temp;
+      return copy;
+    });
   };
 
   const [bulkImageUploadIndex, setBulkImageUploadIndex] = useState<number | null>(null);
@@ -531,12 +565,44 @@ export default function App() {
       text: '',
       image: null,
       fontSize: fontSize || 62,
-      highlightColor: highlightColor || '#150621'
+      highlightColor: highlightColor || '#150621',
+      boxHighlight: false
     }]);
   };
 
   const removePicTextBulkStory = (index: number) => {
     setPicTextBulkStories(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const duplicatePicTextBulkStory = (index: number) => {
+    setPicTextBulkStories(prev => {
+      const copy = [...prev];
+      const copyOfItem = { ...copy[index] };
+      copy.splice(index + 1, 0, copyOfItem);
+      return copy;
+    });
+  };
+
+  const movePicTextBulkStoryUp = (index: number) => {
+    if (index === 0) return;
+    setPicTextBulkStories(prev => {
+      const copy = [...prev];
+      const temp = copy[index];
+      copy[index] = copy[index - 1];
+      copy[index - 1] = temp;
+      return copy;
+    });
+  };
+
+  const movePicTextBulkStoryDown = (index: number) => {
+    setPicTextBulkStories(prev => {
+      if (index === prev.length - 1) return prev;
+      const copy = [...prev];
+      const temp = copy[index];
+      copy[index] = copy[index + 1];
+      copy[index + 1] = temp;
+      return copy;
+    });
   };
   
   // Profile State
@@ -574,6 +640,7 @@ export default function App() {
   const [lineHeight, setLineHeight] = useState(1.25);
   const [letterSpacing, setLetterSpacing] = useState(0);
   const [highlightUnderline, setHighlightUnderline] = useState(false);
+  const [boxHighlight, setBoxHighlight] = useState(false);
   const [boldParagraphIndex, setBoldParagraphIndex] = useState<number | null>(null);
   const [storyImage, setStoryImage] = useState<string | null>(null);
   const [storyImageHeight, setStoryImageHeight] = useState<number>(750);
@@ -759,6 +826,10 @@ export default function App() {
 
     // Apply to bulk stories as well
     setBulkStories(prev => prev.map(story => ({
+      ...story,
+      highlightColor: preset.typography.highlightColor
+    })));
+    setPicTextBulkStories(prev => prev.map(story => ({
       ...story,
       highlightColor: preset.typography.highlightColor
     })));
@@ -1180,17 +1251,51 @@ export default function App() {
     }
   };
 
-  const renderStoryText = (text: string, hColor: string) => {
-    // 1. Process custom highlights [[text]]
+  const handleApplySelectionHighlight = (index: number, style: 'standard' | 'box') => {
+    const isPicText = activeTab === 'pictext' && isPicTextBulk;
+    const newStories = isPicText ? [...picTextBulkStories] : [...bulkStories];
+    const activeEl = document.activeElement as HTMLTextAreaElement;
+    if (activeEl && activeEl.tagName === 'TEXTAREA' && typeof activeEl.selectionStart === 'number') {
+      const start = activeEl.selectionStart;
+      const end = activeEl.selectionEnd;
+      if (start !== end) {
+        const text = newStories[index].text;
+        const selectedText = text.substring(start, end);
+        // Clean existing brackets first
+        const cleanSelection = selectedText.replace(/[\[\]]/g, '');
+        // Apply new brackets
+        const decorated = style === 'box' ? `[[${cleanSelection}]]` : `[${cleanSelection}]`;
+        const updatedText = text.substring(0, start) + decorated + text.substring(end);
+        
+        if (isPicText) {
+          newStories[index].text = updatedText;
+          setPicTextBulkStories(newStories);
+        } else {
+          newStories[index].text = updatedText;
+          setBulkStories(newStories);
+        }
+        
+        // Restore focus and selection
+        setTimeout(() => {
+          activeEl.focus();
+          activeEl.setSelectionRange(start, start + decorated.length);
+        }, 50);
+        return;
+      }
+    }
+  };
+
+  const renderStoryText = (text: string, hColor: string, useBox?: boolean) => {
+    // 1. Process custom highlights [[text]] (Box Highlight)
     const parts0 = text.split(/(\[\[.*?\]\])/);
     const elements0 = parts0.map((part, i) => {
       if (part.startsWith('[[') && part.endsWith(']]')) {
         const content = part.slice(2, -2);
         return (
           <span 
-            key={`custom-${i}`} 
-            style={{ backgroundColor: customHighlightColor }} 
-            className="px-2 py-0.5 rounded-sm mx-0.5 inline-block"
+            key={`box-h-${i}`} 
+            style={{ backgroundColor: hColor || '#150621', color: '#ffffff' }} 
+            className="px-3 py-1 rounded-md mx-1 inline-block font-extrabold shadow-sm text-white"
           >
             {content}
           </span>
@@ -1199,7 +1304,9 @@ export default function App() {
       return part;
     });
 
-    // 2. Process existing highlight brackets [text]
+    const isBoxStyle = useBox !== undefined ? useBox : boxHighlight;
+
+    // 2. Process existing highlight brackets [text] (Standard Highlight)
     return elements0.map((el, i) => {
       if (typeof el !== 'string') return el;
       
@@ -1207,15 +1314,27 @@ export default function App() {
       return parts1.map((part, j) => {
         if (part.startsWith('[') && part.endsWith(']')) {
           const content = part.slice(1, -1);
-          return (
-            <span 
-              key={`h-${i}-${j}`} 
-              style={{ color: hColor }} 
-              className={cn("font-bold decoration-2 underline-offset-4", highlightUnderline ? "underline" : "")}
-            >
-              {content}
-            </span>
-          );
+          if (isBoxStyle) {
+            return (
+              <span 
+                key={`h-${i}-${j}`} 
+                style={{ backgroundColor: hColor, color: '#ffffff' }} 
+                className="px-3 py-0.5 rounded-lg mx-1 inline-block font-extrabold shadow-sm text-white"
+              >
+                {content}
+              </span>
+            );
+          } else {
+            return (
+              <span 
+                key={`h-${i}-${j}`} 
+                style={{ color: hColor }} 
+                className={cn("font-bold decoration-2 underline-offset-4", highlightUnderline ? "underline" : "")}
+              >
+                {content}
+              </span>
+            );
+          }
         }
         return part;
       });
@@ -2171,9 +2290,34 @@ export default function App() {
 
                     {bulkStories.map((story, index) => (
                       <div key={index} className="p-4 bg-[#1c2229] rounded-xl border border-[#2a2d35] space-y-4">
-                         <div className="flex items-center justify-between mb-2">
-                           <div className="flex items-center gap-3">
-                             <span className="text-[10px] font-black text-gray-600 tracking-[0.2em] uppercase">STORY #{index + 1}</span>
+                         <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                           <div className="flex items-center gap-2">
+                             <span className="text-[10px] font-black text-gray-500 tracking-[0.2em] uppercase">STORY #{index + 1}</span>
+                             <div className="flex items-center gap-1.5 border-l border-r border-[#21252d] px-2.5 mx-1">
+                               <button 
+                                 onClick={() => moveBulkStoryUp(index)}
+                                 disabled={index === 0}
+                                 className={cn("transition-colors p-0.5 hover:bg-[#252b35] rounded", index === 0 ? "text-gray-800 cursor-not-allowed" : "text-gray-400 hover:text-blue-400")}
+                                 title="Move Up"
+                               >
+                                 <ChevronUp size={14} />
+                               </button>
+                               <button 
+                                 onClick={() => moveBulkStoryDown(index)}
+                                 disabled={index === bulkStories.length - 1}
+                                 className={cn("transition-colors p-0.5 hover:bg-[#252b35] rounded", index === bulkStories.length - 1 ? "text-gray-800 cursor-not-allowed" : "text-gray-400 hover:text-blue-400")}
+                                 title="Move Down"
+                               >
+                                 <ChevronDown size={14} />
+                               </button>
+                               <button 
+                                 onClick={() => duplicateBulkStory(index)}
+                                 className="text-gray-400 hover:text-blue-400 p-0.5 hover:bg-[#252b35] rounded transition-colors ml-0.5"
+                                 title="Duplicate Card"
+                               >
+                                 <Copy size={12} />
+                               </button>
+                             </div>
                              {bulkStories.length > 1 && (
                                <button 
                                  onClick={() => removeBulkStory(index)}
@@ -2184,19 +2328,35 @@ export default function App() {
                                </button>
                              )}
                            </div>
-                           <div className="flex items-center gap-2">
+                           <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                             <button 
+                                onClick={() => handleApplySelectionHighlight(index, 'standard')}
+                                className="flex items-center gap-0.5 text-[10px] text-indigo-400 font-bold hover:text-indigo-300 transition-colors bg-[#202530] hover:bg-[#282e3c] px-1.5 py-0.5 rounded border border-indigo-950/40"
+                                title="Select text in the editor below and click this to apply a standard highlight"
+                             >
+                               <Zap size={10} /> ⭐ HIGHLIGHT
+                             </button>
+                             <span className="text-gray-800 text-[10px] select-none">|</span>
+                             <button 
+                                onClick={() => handleApplySelectionHighlight(index, 'box')}
+                                className="flex items-center gap-0.5 text-[10px] text-amber-400 font-bold hover:text-amber-300 transition-colors bg-[#252320] hover:bg-[#302c28] px-1.5 py-0.5 rounded border border-amber-950/40"
+                                title="Select text in the editor below and click this to apply a solid box highlight"
+                             >
+                               📦 BOX
+                             </button>
+                             <span className="text-gray-800 text-[10px] select-none">|</span>
                              <button 
                                 onClick={() => handleRandomHighlight(index)}
-                                className="flex items-center gap-1 text-[10px] text-blue-400 font-bold hover:text-blue-300 transition-colors"
+                                className="flex items-center gap-0.5 text-[10px] text-blue-400 font-bold hover:text-blue-300 transition-colors bg-[#112030] hover:bg-[#152a40] px-1.5 py-0.5 rounded border border-blue-950/40"
                              >
-                               <Zap size={10} /> RANDOM HIGHLIGHT
+                               <Zap size={10} /> RANDOM
                              </button>
-                             <span className="text-gray-700 text-[10px]">|</span>
+                             <span className="text-gray-800 text-[10px] select-none">|</span>
                              <button 
                                 onClick={() => handleRemoveHighlight(index)}
-                                className="flex items-center gap-1 text-[10px] text-red-500 font-bold hover:text-red-400 transition-colors"
+                                className="flex items-center gap-0.5 text-[10px] text-red-400 font-bold hover:text-red-350 transition-all bg-[#2a1315] hover:bg-[#3d1a1e] px-1.5 py-0.5 rounded border border-red-950/40"
                              >
-                               <Trash2 size={10} /> REMOVE HIGHLIGHT
+                               <Trash2 size={10} /> REMOVE
                              </button>
                            </div>
                         </div>
@@ -2258,6 +2418,22 @@ export default function App() {
                               />
                             </div>
                           </div>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-2.5 border-t border-[#252a32]">
+                          <label className="flex items-center gap-2 cursor-pointer text-[10px] text-gray-400 hover:text-gray-300 font-bold uppercase tracking-wider">
+                            <input 
+                              type="checkbox" 
+                              checked={!!story.boxHighlight} 
+                              onChange={(e) => {
+                                const newBulk = [...bulkStories];
+                                newBulk[index].boxHighlight = e.target.checked;
+                                setBulkStories(newBulk);
+                              }}
+                              className="w-3.5 h-3.5 rounded bg-[#14161b] border border-[#2a2d35] text-blue-500 focus:ring-0 cursor-pointer"
+                            />
+                            <span>Use Solid Box Highlight Accent</span>
+                          </label>
                         </div>
                       </div>
                     ))}
@@ -2322,7 +2498,7 @@ export default function App() {
                 </div>
 
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-6">
                     <div className="flex items-center gap-2">
                        <div 
                         onClick={() => setHighlightUnderline(!highlightUnderline)}
@@ -2330,7 +2506,17 @@ export default function App() {
                       >
                         <div className={cn("absolute top-1 w-3 h-3 bg-white rounded-full transition-all", highlightUnderline ? "left-6" : "left-1")}></div>
                       </div>
-                      <span className="text-xs text-gray-400">Underline Highlight</span>
+                      <span className="text-xs text-gray-400">Underline</span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                       <div 
+                        onClick={() => setBoxHighlight(!boxHighlight)}
+                        className={cn("w-10 h-5 rounded-full relative cursor-pointer transition-colors", boxHighlight ? "bg-blue-500" : "bg-[#2a2d35]")}
+                      >
+                        <div className={cn("absolute top-1 w-3 h-3 bg-white rounded-full transition-all", boxHighlight ? "left-6" : "left-1")}></div>
+                      </div>
+                      <span className="text-xs text-gray-400">Solid Box</span>
                     </div>
                   </div>
                   <div>
@@ -3339,17 +3525,75 @@ export default function App() {
 
                       {picTextBulkStories.map((story, index) => (
                         <div key={index} className="p-4 bg-[#1c2229] rounded-xl border border-[#2a2d35] space-y-4">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-black text-gray-500 tracking-[0.2em] uppercase">PAGE #{index + 1}</span>
-                            {picTextBulkStories.length > 1 && (
+                          <div className="flex items-center justify-between flex-wrap gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-black text-gray-500 tracking-[0.2em] uppercase">PAGE #{index + 1}</span>
+                              <div className="flex items-center gap-1.5 border-l border-r border-[#21252d] px-2.5 mx-1">
+                                <button 
+                                  onClick={() => movePicTextBulkStoryUp(index)}
+                                  disabled={index === 0}
+                                  className={cn("transition-colors p-0.5 hover:bg-[#252b35] rounded", index === 0 ? "text-gray-800 cursor-not-allowed" : "text-gray-400 hover:text-blue-400")}
+                                  title="Move Up"
+                                >
+                                  <ChevronUp size={14} />
+                                </button>
+                                <button 
+                                  onClick={() => movePicTextBulkStoryDown(index)}
+                                  disabled={index === picTextBulkStories.length - 1}
+                                  className={cn("transition-colors p-0.5 hover:bg-[#252b35] rounded", index === picTextBulkStories.length - 1 ? "text-gray-800 cursor-not-allowed" : "text-gray-400 hover:text-blue-400")}
+                                  title="Move Down"
+                                >
+                                  <ChevronDown size={14} />
+                                </button>
+                                <button 
+                                  onClick={() => duplicatePicTextBulkStory(index)}
+                                  className="text-gray-400 hover:text-blue-400 p-0.5 hover:bg-[#252b35] rounded transition-colors ml-0.5"
+                                  title="Duplicate Card"
+                                >
+                                  <Copy size={12} />
+                                </button>
+                              </div>
+                              {picTextBulkStories.length > 1 && (
+                                <button 
+                                  onClick={() => removePicTextBulkStory(index)}
+                                  className="text-gray-500 hover:text-red-400 transition-colors p-1 hover:bg-[#212830] rounded-lg"
+                                  title="Remove Page"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1.5 flex-wrap justify-end">
                               <button 
-                                onClick={() => removePicTextBulkStory(index)}
-                                className="text-gray-500 hover:text-red-400 transition-colors p-1 hover:bg-[#212830] rounded-lg"
-                                title="Remove Page"
+                                 onClick={() => handleApplySelectionHighlight(index, 'standard')}
+                                 className="flex items-center gap-0.5 text-[10px] text-indigo-400 font-bold hover:text-indigo-300 transition-colors bg-[#202530] hover:bg-[#282e3c] px-1.5 py-0.5 rounded border border-indigo-950/40"
+                                 title="Select text in the editor below and click this to apply a standard highlight"
                               >
-                                <Trash2 size={12} />
+                                <Zap size={10} /> ⭐ HIGHLIGHT
                               </button>
-                            )}
+                              <span className="text-gray-800 text-[10px] select-none">|</span>
+                              <button 
+                                 onClick={() => handleApplySelectionHighlight(index, 'box')}
+                                 className="flex items-center gap-0.5 text-[10px] text-amber-400 font-bold hover:text-amber-300 transition-colors bg-[#252320] hover:bg-[#302c28] px-1.5 py-0.5 rounded border border-amber-950/40"
+                                 title="Select text in the editor below and click this to apply a solid box highlight"
+                              >
+                                📦 BOX
+                              </button>
+                              <span className="text-gray-800 text-[10px] select-none">|</span>
+                              <button 
+                                 onClick={() => handleRandomHighlight(index)}
+                                 className="flex items-center gap-0.5 text-[10px] text-blue-400 font-bold hover:text-blue-300 transition-colors bg-[#112030] hover:bg-[#152a40] px-1.5 py-0.5 rounded border border-blue-950/40"
+                              >
+                                <Zap size={10} /> RANDOM
+                              </button>
+                              <span className="text-gray-800 text-[10px] select-none">|</span>
+                              <button 
+                                 onClick={() => handleRemoveHighlight(index)}
+                                 className="flex items-center gap-0.5 text-[10px] text-red-400 font-bold hover:text-red-350 transition-all bg-[#2a1315] hover:bg-[#3d1a1e] px-1.5 py-0.5 rounded border border-red-950/40"
+                              >
+                                <Trash2 size={10} /> REMOVE
+                              </button>
+                            </div>
                           </div>
 
                           {/* Image Selector (File or URL) */}
@@ -3472,6 +3716,22 @@ export default function App() {
                               </div>
                             </div>
                           </div>
+
+                          <div className="flex items-center justify-between pt-2.5 border-t border-[#252a32]">
+                            <label className="flex items-center gap-2 cursor-pointer text-[10px] text-gray-400 hover:text-gray-300 font-bold uppercase tracking-wider">
+                              <input 
+                                type="checkbox" 
+                                checked={!!story.boxHighlight} 
+                                onChange={(e) => {
+                                  const newStories = [...picTextBulkStories];
+                                  newStories[index].boxHighlight = e.target.checked;
+                                  setPicTextBulkStories(newStories);
+                                }}
+                                className="w-3.5 h-3.5 rounded bg-[#14161b] border border-[#2a2d35] text-blue-500 focus:ring-0 cursor-pointer"
+                              />
+                              <span>Use Solid Box Highlight Accent</span>
+                            </label>
+                          </div>
                         </div>
                       ))}
 
@@ -3577,6 +3837,7 @@ export default function App() {
                   storyText={storyText} 
                   hColor={highlightColor}
                   fSize={fontSize}
+                  boxHighlight={boxHighlight}
                   innerRef={previewRef} 
                 />
               </div>
@@ -3612,6 +3873,7 @@ export default function App() {
                       hColor={story.highlightColor}
                       fSize={story.fontSize}
                       storyImage={story.image}
+                      boxHighlight={story.boxHighlight}
                       innerRef={originalIndex === 0 ? previewRef : null} 
                     />
                   </div>
@@ -3651,6 +3913,7 @@ export default function App() {
                       storyText={story.text} 
                       hColor={story.highlightColor}
                       fSize={story.fontSize}
+                      boxHighlight={story.boxHighlight}
                       innerRef={originalIndex === 0 ? previewRef : null} 
                     />
                   </div>
@@ -3683,7 +3946,8 @@ function Poster({
   footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor,
   bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly, hColor, removePaddingWhenHidden,
   videoBackground, isExporting, boldParagraphIndex,
-  storyImage, storyImageHeight, storyImageRadius, storyImageFit, isPicTextMode
+  storyImage, storyImageHeight, storyImageRadius, storyImageFit, isPicTextMode,
+  boxHighlight
 }: any) {
   const isCardPadded = showCard || !removePaddingWhenHidden;
   const isBlur = scribbleStyle === 'blur' || scribbleStyle === 'title-blur';
@@ -3764,7 +4028,7 @@ function Poster({
                     marginBottom: '1.5em'
                   }}
                 >
-                  {para === '' ? <br /> : renderStoryText(para, hColor)}
+                  {para === '' ? <br /> : renderStoryText(para, hColor, boxHighlight)}
                 </div>
               );
             })}
@@ -4037,7 +4301,7 @@ function Poster({
                         whiteSpace: 'pre-wrap'
                       }}
                     >
-                      {para === '' ? <br /> : renderStoryText(para, hColor)}
+                      {para === '' ? <br /> : renderStoryText(para, hColor, boxHighlight)}
                     </div>
                   );
                 })}
