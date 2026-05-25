@@ -1200,7 +1200,7 @@ export default function App() {
             width: 1080,
             height: 1920,
             style: {
-              transform: 'scale(1)',
+              transform: 'none',
               transformOrigin: 'top left',
               width: '1080px',
               height: '1920px'
@@ -1257,6 +1257,78 @@ export default function App() {
     }
   }, [exportDuration]);
 
+  const handleBulkImageDownload = useCallback(async () => {
+    const cardElements = document.querySelectorAll('.bulk-poster-card');
+    if (cardElements.length === 0) return;
+
+    cancelExportRef.current = false;
+    setIsExporting(true);
+    setExportProgress(0);
+    setBulkExportInfo(`Initializing bulk image export...`);
+
+    // Dynamically import jszip inside the handler to keep initial bundle size smaller
+    const JSZip = (await import('jszip')).default;
+    const zip = new JSZip();
+    const total = cardElements.length;
+
+    try {
+      await new Promise(r => setTimeout(r, 500));
+      if (cancelExportRef.current) throw new Error('Export cancelled');
+
+      for (let i = 0; i < total; i++) {
+        if (cancelExportRef.current) throw new Error('Export cancelled');
+        const node = cardElements[i] as HTMLElement;
+        setBulkExportInfo(`Exporting Image ${i + 1} of ${total}`);
+
+        // Generate base64 dataUrl with pixelRatio 1 for extremely sharp native 1080x1920 canvas export
+        const dataUrl = await toPng(node, {
+          cacheBust: true,
+          pixelRatio: 1,
+          width: 1080,
+          height: 1920,
+          style: {
+            transform: 'none',
+            transformOrigin: 'top left',
+            width: '1080px',
+            height: '1920px'
+          }
+        });
+
+        if (cancelExportRef.current) throw new Error('Export cancelled');
+
+        // Parse base64 string out of the data URL
+        const base64Data = dataUrl.replace(/^data:image\/png;base64,/, '');
+        zip.file(`story-${i + 1}.png`, base64Data, { base64: true });
+
+        const overallProgress = Math.floor(((i + 1) / total) * 100);
+        setExportProgress(overallProgress);
+      }
+
+      if (cancelExportRef.current) throw new Error('Export cancelled');
+      setBulkExportInfo('Generating ZIP file...');
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(zipBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `bulk-images-${Date.now()}.zip`;
+      link.click();
+
+      setIsExporting(false);
+      setExportProgress(0);
+      setBulkExportInfo('');
+      setIsExportModalOpen(false);
+    } catch (err: any) {
+      if (err instanceof Error && err.message === 'Export cancelled') {
+        console.log('Bulk image export cancelled by user');
+      } else {
+        console.error('Bulk image export failed', err);
+      }
+      setIsExporting(false);
+      setExportProgress(0);
+      setBulkExportInfo('');
+    }
+  }, []);
+
   const handleDownload = useCallback(async (type: 'image' | 'video' = 'image') => {
     if (previewRef.current === null) return;
     const node = previewRef.current;
@@ -1271,9 +1343,14 @@ export default function App() {
         if (cancelExportRef.current) return;
         toPng(node, { 
           cacheBust: true,
-          pixelRatio: 2,
+          pixelRatio: 1,
+          width: 1080,
+          height: 1920,
           style: {
-            transform: 'scale(1)',
+            transform: 'none',
+            transformOrigin: 'top left',
+            width: '1080px',
+            height: '1920px'
           }
         })
         .then((dataUrl) => {
@@ -1306,7 +1383,7 @@ export default function App() {
         width: 1080,
         height: 1920,
         style: {
-          transform: 'scale(1)',
+          transform: 'none',
           transformOrigin: 'top left',
           width: '1080px',
           height: '1920px'
@@ -1722,28 +1799,70 @@ export default function App() {
                   </div>
 
                   {(isBulkMode || (activeTab === 'pictext' && isPicTextBulk)) && (
-                    <div 
-                      onClick={() => !isExporting && handleBulkDownload()}
-                      className={cn(
-                        "p-4 rounded-xl border relative overflow-hidden",
-                        isExporting ? "border-purple-500/50 bg-[#1c2229]" : "border-purple-500/40 bg-[#1c2229] ring-2 ring-purple-500/10 cursor-pointer hover:bg-[#252c36] group transition-all"
-                      )}
-                    >
-                      {isExporting && bulkExportInfo && (
-                        <motion.div 
-                          initial={{ width: 0 }}
-                          animate={{ width: `${exportProgress}%` }}
-                          className="absolute bottom-0 left-0 h-1 bg-purple-500 transition-all duration-300"
-                        />
-                      )}
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center group-hover:bg-purple-500/20">
-                          {isExporting ? <Loader2 size={24} className="text-purple-400 animate-spin" /> : <PlusCircle size={24} className="text-purple-400" />}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Bulk Video Option */}
+                      <div 
+                        onClick={() => !isExporting && handleBulkDownload()}
+                        className={cn(
+                          "p-4 rounded-xl border relative overflow-hidden text-left",
+                          isExporting ? (bulkExportInfo && !bulkExportInfo.toLowerCase().includes('image') ? "border-purple-500/50 bg-[#1c2229]" : "border-[#2a2d35] bg-[#1c2229] opacity-50 cursor-not-allowed") : "border-purple-500/40 bg-[#1c2229] ring-2 ring-purple-500/10 cursor-pointer hover:bg-[#252c36] group transition-all"
+                        )}
+                      >
+                        {isExporting && bulkExportInfo && !bulkExportInfo.toLowerCase().includes('image') && (
+                          <motion.div 
+                            initial={{ width: 0 }}
+                            animate={{ width: `${exportProgress}%` }}
+                            className="absolute bottom-0 left-0 h-1 bg-purple-500 transition-all duration-300"
+                          />
+                        )}
+                        <div className="flex items-start gap-4">
+                          <div className="w-12 h-12 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center shrink-0 group-hover:bg-purple-500/20">
+                            {isExporting && bulkExportInfo && !bulkExportInfo.toLowerCase().includes('image') ? (
+                              <Loader2 size={24} className="text-purple-400 animate-spin" />
+                            ) : (
+                              <PlusCircle size={24} className="text-purple-400" />
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-bold text-purple-400 text-sm">Bulk Download Video (ZIP)</h4>
+                            <p className="text-[11px] text-gray-500 leading-tight mt-0.5">Render all {activeTab === 'pictext' ? picTextBulkStories.filter(s => s.text.trim().length > 0 || s.image).length : bulkStories.filter(s => s.text.trim().length > 0).length} stories into a ZIP</p>
+                            {isExporting && bulkExportInfo && !bulkExportInfo.toLowerCase().includes('image') && (
+                              <p className="text-[10px] text-purple-400 font-bold uppercase tracking-widest mt-1.5">{bulkExportInfo} · {exportProgress}%</p>
+                            )}
+                          </div>
                         </div>
-                        <div className="flex-1">
-                          <h4 className="font-bold text-purple-400">Bulk Download Video (ZIP)</h4>
-                          <p className="text-xs text-gray-500">Render all {activeTab === 'pictext' ? picTextBulkStories.filter(s => s.text.trim().length > 0 || s.image).length : bulkStories.filter(s => s.text.trim().length > 0).length} stories into a ZIP</p>
-                          {isExporting && bulkExportInfo && <p className="text-[10px] text-purple-400 font-bold uppercase tracking-widest mt-0.5">{bulkExportInfo} · {exportProgress}%</p>}
+                      </div>
+
+                      {/* Bulk Image Option */}
+                      <div 
+                        onClick={() => !isExporting && handleBulkImageDownload()}
+                        className={cn(
+                          "p-4 rounded-xl border relative overflow-hidden text-left",
+                          isExporting ? (bulkExportInfo && bulkExportInfo.toLowerCase().includes('image') ? "border-emerald-500/50 bg-[#1c2229]" : "border-[#2a2d35] bg-[#1c2229] opacity-50 cursor-not-allowed") : "border-emerald-500/40 bg-[#1c2229] ring-2 ring-emerald-500/10 cursor-pointer hover:bg-[#252c36] group transition-all"
+                        )}
+                      >
+                        {isExporting && bulkExportInfo && bulkExportInfo.toLowerCase().includes('image') && (
+                          <motion.div 
+                            initial={{ width: 0 }}
+                            animate={{ width: `${exportProgress}%` }}
+                            className="absolute bottom-0 left-0 h-1 bg-emerald-500 transition-all duration-300"
+                          />
+                        )}
+                        <div className="flex items-start gap-4">
+                          <div className="w-12 h-12 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0 group-hover:bg-emerald-500/20">
+                            {isExporting && bulkExportInfo && bulkExportInfo.toLowerCase().includes('image') ? (
+                              <Loader2 size={24} className="text-emerald-400 animate-spin" />
+                            ) : (
+                              <ImageIcon size={24} className="text-emerald-400" />
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-bold text-emerald-400 text-sm">Bulk Download Images (ZIP)</h4>
+                            <p className="text-[11px] text-gray-500 leading-tight mt-0.5">Render all {activeTab === 'pictext' ? picTextBulkStories.filter(s => s.text.trim().length > 0 || s.image).length : bulkStories.filter(s => s.text.trim().length > 0).length} pages as high-quality PNG ZIP</p>
+                            {isExporting && bulkExportInfo && bulkExportInfo.toLowerCase().includes('image') && (
+                              <p className="text-[10px] text-emerald-400 font-bold uppercase tracking-widest mt-1.5">{bulkExportInfo} · {exportProgress}%</p>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -4037,7 +4156,7 @@ export default function App() {
             <div className="flex flex-col items-center gap-4">
               <div 
                 className="relative overflow-visible shadow-[0_40px_100px_-20px_rgba(0,0,0,0.5)] rounded-2xl" 
-                style={{ width: '356px', height: '633px' }}
+                style={isExporting ? { width: '1080px', height: '1920px' } : { width: '356px', height: '633px' }}
               >
                 <Poster 
                   {...posterProps} 
@@ -4072,7 +4191,7 @@ export default function App() {
                   </div>
                   <div 
                     className="relative overflow-visible shadow-[0_40px_100px_-20px_rgba(0,0,0,0.5)] rounded-2xl bulk-poster-card transition-transform duration-300 group-hover/card:scale-[1.01]" 
-                    style={{ width: '356px', height: '633px' }}
+                    style={isExporting ? { width: '1080px', height: '1920px' } : { width: '356px', height: '633px' }}
                   >
                     <Poster 
                       {...posterProps} 
@@ -4113,7 +4232,7 @@ export default function App() {
                   </div>
                   <div 
                     className="relative overflow-visible shadow-[0_40px_100px_-20px_rgba(0,0,0,0.5)] rounded-2xl bulk-poster-card transition-transform duration-300 group-hover/card:scale-[1.01]" 
-                    style={{ width: '356px', height: '633px' }}
+                    style={isExporting ? { width: '1080px', height: '1920px' } : { width: '356px', height: '633px' }}
                   >
                     <Poster 
                       {...posterProps} 
@@ -4170,7 +4289,7 @@ function Poster({
           background: bgStyle === 'solid' ? bgColor : 
                       bgStyle === 'gradient' ? `linear-gradient(to bottom, ${bgColor}, ${gradEnd})` : 
                       '#000',
-          transform: 'scale(0.33)',
+          transform: isExporting ? 'none' : 'scale(0.33)',
           transformOrigin: 'top left',
           position: 'absolute',
           top: 0,
@@ -4192,6 +4311,7 @@ function Poster({
                 objectFit: storyImageFit,
               }}
               referrerPolicy="no-referrer"
+              crossOrigin="anonymous"
             />
           </div>
         ) : (
@@ -4387,7 +4507,7 @@ function Poster({
                     bgStyle === 'solid' ? bgColor : 
                     bgStyle === 'gradient' ? `linear-gradient(to bottom, ${bgColor}, ${gradEnd})` : 
                     '#000')),
-        transform: 'scale(0.33)',
+        transform: isExporting ? 'none' : 'scale(0.33)',
         transformOrigin: 'top left',
         position: 'absolute',
         top: 0,
@@ -4400,16 +4520,18 @@ function Poster({
           alt="Full Preview" 
           className="absolute inset-0 w-full h-full object-contain bg-black"
           style={{ zIndex: 50 }}
+          crossOrigin="anonymous"
         />
       ) : (
         <>
-          {bgStyle === 'image' && bgImage && !(isExporting && videoBackground) && (
+           {bgStyle === 'image' && bgImage && !(isExporting && videoBackground) && (
             <>
               <img 
                 src={bgImage} 
                 alt="Background" 
                 className="absolute inset-0 w-full h-full object-cover"
                 style={{ zIndex: 0 }}
+                crossOrigin="anonymous"
               />
               <div 
                 className="absolute inset-0 z-0" 
@@ -4469,6 +4591,7 @@ function Poster({
                     objectFit: storyImageFit,
                   }}
                   referrerPolicy="no-referrer"
+                  crossOrigin="anonymous"
                 />
               </div>
             )}
