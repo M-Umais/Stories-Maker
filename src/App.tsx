@@ -661,7 +661,8 @@ export default function App() {
       text: 'Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [[Again?]] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...',
       image: null,
       fontSize: 62,
-      highlightColor: '#150621'
+      highlightColor: '#150621',
+      imageHeight: 750
     }
   ]);
 
@@ -717,7 +718,8 @@ export default function App() {
       image: null,
       fontSize: fontSize || 62,
       highlightColor: highlightColor || '#150621',
-      boxHighlight: false
+      boxHighlight: false,
+      imageHeight: storyImageHeight
     }]);
   };
 
@@ -1156,7 +1158,8 @@ export default function App() {
                 text: txtVal,
                 image: imgVal || null,
                 fontSize: fontSize || 62,
-                highlightColor: highlightColor || '#150621'
+                highlightColor: highlightColor || '#150621',
+                imageHeight: storyImageHeight
               });
             }
           });
@@ -3866,7 +3869,8 @@ export default function App() {
                               text: '',
                               image: null,
                               fontSize: 62,
-                              highlightColor: highlightColor
+                              highlightColor: highlightColor,
+                              imageHeight: storyImageHeight
                             }]);
                           }}
                           className="text-[10px] text-red-500 hover:text-red-400 font-bold uppercase transition-colors"
@@ -4067,6 +4071,25 @@ export default function App() {
                                 />
                               </div>
                             </div>
+                            <div className="col-span-2">
+                              <div className="flex justify-between text-[10px] text-gray-500 mb-1">
+                                <span>Image Height</span>
+                                <span>{story.imageHeight !== undefined ? story.imageHeight : storyImageHeight}px</span>
+                              </div>
+                              <input 
+                                type="range" 
+                                min="100" 
+                                max="1200" 
+                                step="10"
+                                value={story.imageHeight !== undefined ? story.imageHeight : storyImageHeight} 
+                                onChange={(e) => {
+                                  const newStories = [...picTextBulkStories];
+                                  newStories[index].imageHeight = parseInt(e.target.value);
+                                  setPicTextBulkStories(newStories);
+                                }} 
+                                className="w-full accent-blue-500" 
+                              />
+                            </div>
                           </div>
 
                           <div className="flex items-center justify-between pt-2.5 border-t border-[#252a32]">
@@ -4225,6 +4248,7 @@ export default function App() {
                       hColor={story.highlightColor}
                       fSize={story.fontSize}
                       storyImage={story.image}
+                      storyImageHeight={story.imageHeight !== undefined ? story.imageHeight : storyImageHeight}
                       boxHighlight={story.boxHighlight}
                       innerRef={originalIndex === 0 ? previewRef : null} 
                     />
