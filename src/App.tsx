@@ -797,6 +797,7 @@ export default function App() {
   const [storyImageHeight, setStoryImageHeight] = useState<number>(750);
   const [storyImageRadius, setStoryImageRadius] = useState<number>(16);
   const [storyImageFit, setStoryImageFit] = useState<'cover' | 'contain' | 'fill'>('cover');
+  const [imagePosition, setImagePosition] = useState<'above-profile' | 'below-profile'>('below-profile');
 
   // Background State
   const [bgStyle, setBgStyle] = useState<'solid' | 'gradient' | 'image'>('solid');
@@ -876,6 +877,7 @@ export default function App() {
     setStoryImageHeight(750);
     setStoryImageRadius(16);
     setStoryImageFit('cover');
+    setImagePosition('below-profile');
     setBulkStories([
       {
         text: 'Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [Again?] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...',
@@ -1647,7 +1649,7 @@ export default function App() {
     footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor,
     bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly, removePaddingWhenHidden,
     videoBackground, isExporting, boldParagraphIndex,
-    storyImage, storyImageHeight, storyImageRadius, storyImageFit,
+    storyImage, storyImageHeight, storyImageRadius, storyImageFit, imagePosition,
     isPicTextMode: activeTab === 'pictext'
   };
 
@@ -2268,6 +2270,18 @@ export default function App() {
                 </div>
 
                 <div className="mt-4">
+                  <label className="text-xs text-gray-400 block mb-1">Image Placement</label>
+                  <select 
+                    value={imagePosition}
+                    onChange={(e: any) => setImagePosition(e.target.value)}
+                    className="w-full bg-[#2a2d35] border border-[#353941] rounded px-3 py-2 text-sm outline-none focus:border-blue-500 mb-4"
+                  >
+                    <option value="below-profile">Below Profile Section</option>
+                    <option value="above-profile">Above Profile Section (At Top)</option>
+                  </select>
+                </div>
+
+                <div className="mt-4">
                   <div className="flex justify-between mb-1 items-center">
                     <div className="flex items-center gap-1.5">
                       <label className="text-xs text-gray-400 block">Profile Move (Upward)</label>
@@ -2539,6 +2553,18 @@ export default function App() {
                                   <option value="36">Card Radius</option>
                                 </select>
                               </div>
+                            </div>
+
+                            <div>
+                              <label className="text-[10px] text-gray-500 block mb-1">IMAGE PLACEMENT</label>
+                              <select 
+                                value={imagePosition}
+                                onChange={(e: any) => setImagePosition(e.target.value as any)}
+                                className="w-full bg-[#1a1d23] border border-[#30343c] rounded p-1.5 text-xs text-gray-300 outline-none"
+                              >
+                                <option value="below-profile">Below Profile Section</option>
+                                <option value="above-profile">Above Profile Section (At Top)</option>
+                              </select>
                             </div>
                           </div>
                         </div>
@@ -4273,7 +4299,7 @@ function Poster({
   bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly, hColor, removePaddingWhenHidden,
   videoBackground, isExporting, boldParagraphIndex,
   storyImage, storyImageHeight, storyImageRadius, storyImageFit, isPicTextMode,
-  boxHighlight
+  boxHighlight, imagePosition
 }: any) {
   const isCardPadded = showCard || !removePaddingWhenHidden;
   const isBlur = scribbleStyle === 'blur' || scribbleStyle === 'title-blur';
@@ -4562,6 +4588,31 @@ function Poster({
           {/* Top Spacing - Always present to keep card layout stable */}
           <div style={{ height: `${Math.max(0, 160 - profileMove)}px` }} className="w-full flex-shrink-0 transition-all duration-300" />
 
+          {/* Story/Top Image - Positioned Above the Profile Section */}
+          {storyImage && imagePosition === 'above-profile' && (
+            <div className="w-full px-16 mb-12 flex-shrink-0 z-10">
+              <div 
+                className="w-full relative overflow-hidden flex-shrink-0"
+                style={{ 
+                  height: `${storyImageHeight}px`,
+                  borderRadius: `${storyImageRadius}px`,
+                  boxShadow: showCard ? '0 30px 80px -15px rgba(0,0,0,0.15)' : 'none',
+                }}
+              >
+                <img 
+                  src={storyImage} 
+                  alt="Story Top Media" 
+                  className="w-full h-full"
+                  style={{ 
+                    objectFit: storyImageFit,
+                  }}
+                  referrerPolicy="no-referrer"
+                  crossOrigin="anonymous"
+                />
+              </div>
+            </div>
+          )}
+
           {/* Profile Section (Conditional Outside) */}
           {showProfile && profilePosition === 'outside' && profileSection}
 
@@ -4573,8 +4624,8 @@ function Poster({
               transform: `translateY(${cardMove}px)`
             }}
           >
-            {/* Story/Top Image - Positioned Above and Outside the Card Section */}
-            {storyImage && (
+            {/* Story/Top Image - Positioned Below the Profile Section */}
+            {storyImage && imagePosition !== 'above-profile' && (
               <div 
                 className="w-full relative overflow-hidden mb-12 flex-shrink-0"
                 style={{ 
