@@ -23,7 +23,8 @@ import {
   FileImage,
   Music,
   Volume2,
-  VolumeX
+  VolumeX,
+  Mic
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toPng, toCanvas } from 'html-to-image';
@@ -169,7 +170,7 @@ export default function App() {
     return 'video/webm';
   }, []);
 
-  const recordCanvasToMp4 = async (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0) => {
+  const recordCanvasToMp4 = async (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0, audioStartOffset = 0) => {
     // Check for WebCodecs support
     if (!('VideoEncoder' in window) || !('VideoFrame' in window)) {
       throw new Error('WebCodecs API not supported');
@@ -223,10 +224,10 @@ export default function App() {
         width,
         height
       },
-      audio: uploadedMusicBuffer ? {
+      audio: (uploadedMusicBuffer || uploadedVoiceOverBuffer) ? {
         codec: 'aac',
-        numberOfChannels: uploadedMusicBuffer.numberOfChannels,
-        sampleRate: uploadedMusicBuffer.sampleRate
+        numberOfChannels: 2,
+        sampleRate: 44100
       } : undefined,
       fastStart: 'in-memory'
     });
@@ -307,7 +308,7 @@ export default function App() {
         // 1. Draw video background
         if (video) {
           // Sync video time
-          video.currentTime = (frameIndex / fps) % video.duration;
+          video.currentTime = (audioStartOffset + (frameIndex / fps)) % video.duration;
           
           await new Promise(r => {
             let done = false;
@@ -385,7 +386,10 @@ export default function App() {
       // Encode audio if uploaded
       let audioEncoderError: Error | null = null;
       let audioEncoder: AudioEncoder | null = null;
-      if (uploadedMusicBuffer) {
+      
+      const hasAudio = uploadedMusicBuffer || uploadedVoiceOverBuffer;
+
+      if (hasAudio) {
         audioEncoder = new AudioEncoder({
           output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
           error: (e) => {
@@ -396,15 +400,18 @@ export default function App() {
 
         audioEncoder.configure({
           codec: 'mp4a.40.2',
-          numberOfChannels: uploadedMusicBuffer.numberOfChannels,
-          sampleRate: uploadedMusicBuffer.sampleRate,
+          numberOfChannels: 2,
+          sampleRate: 44100,
           bitrate: 128000
         });
 
-        const sampleRate = uploadedMusicBuffer.sampleRate;
-        const numberOfChannels = uploadedMusicBuffer.numberOfChannels;
+        const sampleRate = 44100;
+        const numberOfChannels = 2;
         const chunkFrames = 1024;
         const totalSamples = Math.floor(duration * sampleRate);
+
+        const musicVol = musicVolume / 100;
+        const voVol = voiceOverVolume / 100;
 
         for (let offset = 0; offset < totalSamples; offset += chunkFrames) {
           if (cancelExportRef.current) {
@@ -415,10 +422,22 @@ export default function App() {
           const chunkData = new Float32Array(currentChunkSize * numberOfChannels);
           
           for (let channel = 0; channel < numberOfChannels; channel++) {
-            const channelData = uploadedMusicBuffer.getChannelData(channel);
+            const musicChannelData = uploadedMusicBuffer ? uploadedMusicBuffer.getChannelData(channel) : null;
+            const voChannelData = uploadedVoiceOverBuffer ? uploadedVoiceOverBuffer.getChannelData(channel) : null;
+            
             for (let i = 0; i < currentChunkSize; i++) {
-              const sourceIndex = (offset + i) % channelData.length;
-              chunkData[channel * currentChunkSize + i] = channelData[sourceIndex];
+              let sampleValue = 0;
+              if (musicChannelData) {
+                const sourceIndex = (offset + i) % musicChannelData.length;
+                sampleValue += musicChannelData[sourceIndex] * musicVol;
+              }
+              if (voChannelData) {
+                const sourceIndex = Math.floor(audioStartOffset * sampleRate) + offset + i;
+                if (sourceIndex < voChannelData.length) {
+                  sampleValue += voChannelData[sourceIndex] * voVol;
+                }
+              }
+              chunkData[channel * currentChunkSize + i] = Math.max(-1.0, Math.min(1.0, sampleValue));
             }
           }
 
@@ -464,18 +483,18 @@ export default function App() {
     }
   };
 
-  const recordWithFallback = async (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0) => {
+  const recordWithFallback = async (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0, audioStartOffset = 0) => {
     if ('VideoEncoder' in window) {
       try {
-        return await recordCanvasToMp4(canvas, duration, onProgress, videoUrl, overlayOpacity);
+        return await recordCanvasToMp4(canvas, duration, onProgress, videoUrl, overlayOpacity, audioStartOffset);
       } catch (err) {
         console.error('VideoEncoder failed, falling back to MediaRecorder:', err);
       }
     }
-    return await recordCanvasMediaRecorder(canvas, duration, onProgress, videoUrl, overlayOpacity);
+    return await recordCanvasMediaRecorder(canvas, duration, onProgress, videoUrl, overlayOpacity, audioStartOffset);
   };
 
-  const recordCanvasMediaRecorder = (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0): Promise<Blob> => {
+  const recordCanvasMediaRecorder = (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0, audioStartOffset = 0): Promise<Blob> => {
     return new Promise(async (resolve, reject) => {
       const width = canvas.width;
       const height = canvas.height;
@@ -489,6 +508,8 @@ export default function App() {
 
       let video: HTMLVideoElement | null = null;
       let audio: HTMLAudioElement | null = null;
+      let voAudio: HTMLAudioElement | null = null;
+      let audioCtx: any = null;
 
       try {
         if (videoUrl) {
@@ -512,15 +533,37 @@ export default function App() {
 
         const stream = offscreen.captureStream(30);
 
-        if (uploadedMusicUrl) {
-          audio = document.createElement('audio');
-          audio.src = uploadedMusicUrl;
-          audio.crossOrigin = 'anonymous';
-          audio.loop = true;
-          audio.volume = 1.0;
+        if (uploadedMusicUrl || uploadedVoiceOverUrl) {
           try {
-            audio.play().catch(e => console.log('Autoplay blocked in media recorder:', e));
-            const audioStream = (audio as any).captureStream ? (audio as any).captureStream() : (audio as any).mozCaptureStream ? (audio as any).mozCaptureStream() : null;
+            audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+            const dest = audioCtx.createMediaStreamDestination();
+
+            if (uploadedMusicUrl) {
+              audio = document.createElement('audio');
+              audio.src = uploadedMusicUrl;
+              audio.crossOrigin = 'anonymous';
+              audio.loop = true;
+              audio.volume = musicVolume / 100;
+              audio.play().catch(e => console.log('Autoplay blocked in media recorder:', e));
+              const musicNode = audioCtx.createMediaElementSource(audio);
+              musicNode.connect(dest);
+            }
+
+            if (uploadedVoiceOverUrl) {
+              voAudio = document.createElement('audio');
+              voAudio.src = uploadedVoiceOverUrl;
+              voAudio.crossOrigin = 'anonymous';
+              voAudio.loop = false; // Do not loop voice over in precise sub-segments
+              voAudio.volume = voiceOverVolume / 100;
+              if (audioStartOffset > 0) {
+                voAudio.currentTime = audioStartOffset;
+              }
+              voAudio.play().catch(e => console.log('Autoplay blocked in media recorder voice over:', e));
+              const voiceNode = audioCtx.createMediaElementSource(voAudio);
+              voiceNode.connect(dest);
+            }
+
+            const audioStream = dest.stream;
             if (audioStream) {
               const audioTrack = audioStream.getAudioTracks()[0];
               if (audioTrack) {
@@ -528,7 +571,7 @@ export default function App() {
               }
             }
           } catch (e) {
-            console.error("Failed to attach audio track to media recorder fallback:", e);
+            console.error("Failed to attach mixed audio track to media recorder fallback:", e);
           }
         }
 
@@ -549,6 +592,15 @@ export default function App() {
               audio.pause();
               audio.remove();
               audio = null;
+            }
+            if (voAudio) {
+              voAudio.pause();
+              voAudio.remove();
+              voAudio = null;
+            }
+            if (audioCtx) {
+              audioCtx.close();
+              audioCtx = null;
             }
             resolveStop(new Blob(chunks, { type: mimeType }));
           };
@@ -573,7 +625,7 @@ export default function App() {
           ctx.fillRect(0, 0, width, height);
 
           if (video) {
-            video.currentTime = (frameIndex / fps) % video.duration;
+            video.currentTime = (audioStartOffset + (frameIndex / fps)) % video.duration;
             await new Promise(r => {
               let done = false;
               const onSeeked = () => {
@@ -640,6 +692,17 @@ export default function App() {
           audio.remove();
           audio = null;
         }
+        if (voAudio) {
+          voAudio.pause();
+          voAudio.remove();
+          voAudio = null;
+        }
+        if (audioCtx) {
+          try {
+            audioCtx.close();
+          } catch (e) {}
+          audioCtx = null;
+        }
       }
     });
   };
@@ -650,7 +713,8 @@ export default function App() {
     {
       text: 'Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [Again?] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...',
       fontSize: 62,
-      highlightColor: '#150621'
+      highlightColor: '#150621',
+      boldParagraphIndex: null
     }
   ]);
 
@@ -662,7 +726,8 @@ export default function App() {
       image: null,
       fontSize: 62,
       highlightColor: '#150621',
-      imageHeight: 750
+      imageHeight: 750,
+      boldParagraphIndex: null
     }
   ]);
 
@@ -671,7 +736,8 @@ export default function App() {
       text: '',
       fontSize: 62,
       highlightColor: highlightColor,
-      boxHighlight: false
+      boxHighlight: false,
+      boldParagraphIndex: null
     }]);
   };
 
@@ -719,7 +785,8 @@ export default function App() {
       fontSize: fontSize || 62,
       highlightColor: highlightColor || '#150621',
       boxHighlight: false,
-      imageHeight: storyImageHeight
+      imageHeight: storyImageHeight,
+      boldParagraphIndex: null
     }]);
   };
 
@@ -830,6 +897,19 @@ export default function App() {
   const musicFileInputRef = useRef<HTMLInputElement>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
 
+  // Voice Over State
+  const [uploadedVoiceOverFile, setUploadedVoiceOverFile] = useState<File | null>(null);
+  const [uploadedVoiceOverUrl, setUploadedVoiceOverUrl] = useState<string | null>(null);
+  const [uploadedVoiceOverBuffer, setUploadedVoiceOverBuffer] = useState<AudioBuffer | null>(null);
+  const [isVoiceOverMuted, setIsVoiceOverMuted] = useState<boolean>(false);
+  const [isVoiceOverDecoding, setIsVoiceOverDecoding] = useState<boolean>(false);
+  const [musicVolume, setMusicVolume] = useState<number>(50); // percentage 0-100
+  const [voiceOverVolume, setVoiceOverVolume] = useState<number>(100); // percentage 0-100
+
+  // Voice Over Refs
+  const voiceOverFileInputRef = useRef<HTMLInputElement>(null);
+  const voiceOverElementRef = useRef<HTMLAudioElement | null>(null);
+
   // Footer State
   const [showFooter, setShowFooter] = useState(true);
   const [footerText, setFooterText] = useState("CONTINUE READING IN COMMENT");
@@ -846,6 +926,7 @@ export default function App() {
 
   useEffect(() => {
     if (audioElementRef.current) {
+      audioElementRef.current.volume = musicVolume / 100;
       if (uploadedMusicUrl && !isMusicMuted && !isExporting) {
         audioElementRef.current.play().catch(err => {
           console.log('Autoplay blocked. Pressing play after click will work.', err);
@@ -854,7 +935,20 @@ export default function App() {
         audioElementRef.current.pause();
       }
     }
-  }, [uploadedMusicUrl, isMusicMuted, isExporting]);
+  }, [uploadedMusicUrl, isMusicMuted, isExporting, musicVolume]);
+
+  useEffect(() => {
+    if (voiceOverElementRef.current) {
+      voiceOverElementRef.current.volume = voiceOverVolume / 100;
+      if (uploadedVoiceOverUrl && !isVoiceOverMuted && !isExporting) {
+        voiceOverElementRef.current.play().catch(err => {
+          console.log('Autoplay blocked. Pressing play after click will work.', err);
+        });
+      } else {
+        voiceOverElementRef.current.pause();
+      }
+    }
+  }, [uploadedVoiceOverUrl, isVoiceOverMuted, isExporting, voiceOverVolume]);
 
   const bgFileInputRef = useRef<HTMLInputElement>(null);
   const videoBgInputRef = useRef<HTMLInputElement>(null);
@@ -934,6 +1028,13 @@ export default function App() {
     setVideoBackground(null);
     setPreviousBgStyle(null);
     setRemovePaddingWhenHidden(false);
+    setUploadedVoiceOverFile(null);
+    setUploadedVoiceOverUrl(null);
+    setUploadedVoiceOverBuffer(null);
+    setIsVoiceOverMuted(false);
+    setIsVoiceOverDecoding(false);
+    setMusicVolume(50);
+    setVoiceOverVolume(100);
   };
 
   const handleNewPoster = () => {
@@ -1056,6 +1157,29 @@ export default function App() {
     }
   };
 
+  const resampleAudioBuffer = async (audioBuffer: AudioBuffer, targetSampleRate = 44100, targetChannels = 2): Promise<AudioBuffer> => {
+    if (audioBuffer.sampleRate === targetSampleRate && audioBuffer.numberOfChannels === targetChannels) {
+      return audioBuffer;
+    }
+    try {
+      const offlineCtx = new (window.OfflineAudioContext || (window as any).webkitOfflineAudioContext)(
+        targetChannels,
+        Math.ceil(audioBuffer.duration * targetSampleRate),
+        targetSampleRate
+      );
+      
+      const source = offlineCtx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(offlineCtx.destination);
+      source.start();
+      
+      return await offlineCtx.startRendering();
+    } catch (e) {
+      console.error("Resampling failed, returning original audio buffer", e);
+      return audioBuffer;
+    }
+  };
+
   const handleMusicUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -1069,11 +1193,38 @@ export default function App() {
         const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
         const arrayBuffer = await file.arrayBuffer();
         const decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-        setUploadedMusicBuffer(decodedBuffer);
+        const resampled = await resampleAudioBuffer(decodedBuffer);
+        setUploadedMusicBuffer(resampled);
       } catch (err) {
         console.error("Failed to decode uploaded background music audio:", err);
       } finally {
         setIsMusicDecoding(false);
+      }
+    }
+  };
+
+  const handleVoiceOverUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setUploadedVoiceOverFile(file);
+      setIsVoiceOverDecoding(true);
+      const url = URL.createObjectURL(file);
+      setUploadedVoiceOverUrl(url);
+      
+      try {
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const arrayBuffer = await file.arrayBuffer();
+        const decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+        const resampled = await resampleAudioBuffer(decodedBuffer);
+        setUploadedVoiceOverBuffer(resampled);
+        // Automatically adjust the duration of the exported video based on the uploaded voice-over duration.
+        if (decodedBuffer.duration) {
+          setExportDuration(Math.ceil(decodedBuffer.duration));
+        }
+      } catch (err) {
+        console.error("Failed to decode uploaded voice over audio:", err);
+      } finally {
+        setIsVoiceOverDecoding(false);
       }
     }
   };
@@ -1097,7 +1248,8 @@ export default function App() {
             const newStories = stories.map(storyText => ({
               text: storyText.toString().trim(),
               fontSize: 62,
-              highlightColor: highlightColor
+              highlightColor: highlightColor,
+              boldParagraphIndex: null
             }));
             setBulkStories(newStories);
           }
@@ -1159,7 +1311,8 @@ export default function App() {
                 image: imgVal || null,
                 fontSize: fontSize || 62,
                 highlightColor: highlightColor || '#150621',
-                imageHeight: storyImageHeight
+                imageHeight: storyImageHeight,
+                boldParagraphIndex: null
               });
             }
           });
@@ -1183,6 +1336,35 @@ export default function App() {
     setExportProgress(0);
     setBulkExportInfo(`Initializing bulk export...`);
     
+    // Proportional display distribution logic for voice-over
+    const activePages = activeTab === 'pictext'
+      ? picTextBulkStories
+      : bulkStories.filter(s => s.text.trim().length > 0);
+
+    const useVoiceOver = !!uploadedVoiceOverBuffer;
+    const totalVODuration = uploadedVoiceOverBuffer ? uploadedVoiceOverBuffer.duration : exportDuration;
+
+    const pageTexts = activePages.map(page => page.text || '');
+    const pageTextLengths = pageTexts.map(text => {
+      const len = text.trim().length;
+      return len > 0 ? len : 10;
+    });
+    const totalTextLength = pageTextLengths.reduce((sum, len) => sum + len, 0);
+
+    const pageDurations = activePages.map((_, idx) => {
+      if (useVoiceOver) {
+        return totalTextLength > 0 ? totalVODuration * (pageTextLengths[idx] / totalTextLength) : totalVODuration / activePages.length;
+      }
+      return exportDuration;
+    });
+
+    let currentOffset = 0;
+    const pageOffsets = pageDurations.map(dur => {
+      const offset = currentOffset;
+      currentOffset += dur;
+      return offset;
+    });
+
     // Dynamically import jszip inside the handler to keep the initial bundle smaller
     const JSZip = (await import('jszip')).default;
     const zip = new JSZip();
@@ -1198,6 +1380,9 @@ export default function App() {
         const node = cardElements[i] as HTMLElement;
         setBulkExportInfo(`Exporting Card ${i + 1} of ${total}`);
         
+        const pageDurationVal = pageDurations[i] || exportDuration;
+        const pageOffsetVal = pageOffsets[i] || 0;
+
         const blob = await new Promise<Blob>((resolve, reject) => {
           toCanvas(node, {
             pixelRatio: 1,
@@ -1216,14 +1401,14 @@ export default function App() {
                 reject(new Error('Export cancelled'));
                 return;
               }
-              const videoBlob = await recordWithFallback(canvas, exportDuration, (cardProgress) => {
+              const videoBlob = await recordWithFallback(canvas, pageDurationVal, (cardProgress) => {
                 if (cancelExportRef.current) {
                   reject(new Error('Export cancelled'));
                   return;
                 }
                 const overallProgress = Math.floor(((i + (cardProgress / 100)) / total) * 100);
                 setExportProgress(overallProgress);
-              }, videoBackground, bgImageOverlay);
+              }, videoBackground, bgImageOverlay, pageOffsetVal);
               resolve(videoBlob);
             } catch (err) {
               console.error('Bulk export error:', err);
@@ -1260,7 +1445,7 @@ export default function App() {
       setExportProgress(0);
       setBulkExportInfo('');
     }
-  }, [exportDuration]);
+  }, [exportDuration, activeTab, picTextBulkStories, bulkStories, uploadedVoiceOverBuffer, videoBackground, bgImageOverlay]);
 
   const handleBulkImageDownload = useCallback(async () => {
     const cardElements = document.querySelectorAll('.bulk-poster-card');
@@ -1705,6 +1890,17 @@ export default function App() {
         />
       )}
 
+      {/* Voice Over Audio Element */}
+      {uploadedVoiceOverUrl && (
+        <audio 
+          ref={voiceOverElementRef}
+          src={uploadedVoiceOverUrl} 
+          loop 
+          muted={isVoiceOverMuted || isExporting}
+          style={{ display: 'none' }}
+        />
+      )}
+
       {/* Hidden CSV Input */}
       <input 
         type="file" 
@@ -1901,7 +2097,12 @@ export default function App() {
                     <div className="space-y-4" onClick={(e) => e.stopPropagation()}>
                     <div className="flex justify-between items-center text-xs font-medium">
                       <span className="text-gray-400">Duration</span>
-                      <span className="text-blue-400 font-mono">{exportDuration}s</span>
+                      <div className="flex items-center gap-1.5">
+                        {uploadedVoiceOverUrl && (
+                          <span className="text-[9px] bg-[#4f46e5]/10 text-[#818cf8] border border-[#4f46e5]/20 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider">Synced with VO</span>
+                        )}
+                        <span className="text-blue-400 font-mono">{exportDuration}s</span>
+                      </div>
                     </div>
                     <input 
                       type="range" 
@@ -2775,6 +2976,33 @@ export default function App() {
                           </div>
                         </div>
 
+                        {/* Bold Specific Paragraph Selector */}
+                        <div className="mt-2.5 pt-2.5 border-t border-[#2a2d35]/30">
+                          <label className="text-[10px] text-gray-500 font-bold block mb-1">BOLD PARAGRAPH ONLY</label>
+                          <select 
+                            value={story.boldParagraphIndex === undefined || story.boldParagraphIndex === null ? 'none' : story.boldParagraphIndex}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              const newBulk = [...bulkStories];
+                              newBulk[index].boldParagraphIndex = val === 'none' ? null : parseInt(val);
+                              setBulkStories(newBulk);
+                            }}
+                            className="w-full bg-[#14161b] border border-[#2a2d35] rounded px-2.5 py-1.5 text-xs text-gray-300 outline-none focus:border-blue-500"
+                          >
+                            <option value="none">None (Regular Weight)</option>
+                            {story.text.split('\n').map((para: string, idx: number) => {
+                              const cleanPara = para.trim();
+                              const displayNum = idx + 1;
+                              const previewText = cleanPara.length > 30 ? cleanPara.substring(0, 30) + '...' : cleanPara;
+                              return (
+                                <option key={idx} value={idx}>
+                                  Paragraph {displayNum}: {previewText}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </div>
+
                         <div className="flex items-center justify-between pt-2.5 border-t border-[#252a32]">
                           <label className="flex items-center gap-2 cursor-pointer text-[10px] text-gray-400 hover:text-gray-300 font-bold uppercase tracking-wider">
                             <input 
@@ -3251,6 +3479,139 @@ export default function App() {
                       )}
                     </div>
                   </div>
+
+                  {/* Voice Over Option */}
+                  <div className="pt-4 border-t border-[#2a2d35] space-y-4">
+                    <div>
+                      <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block mb-2">Voice-Over Audio</label>
+                      <input 
+                        type="file" 
+                        ref={voiceOverFileInputRef} 
+                        onChange={handleVoiceOverUpload} 
+                        accept="audio/*" 
+                        className="hidden" 
+                      />
+                      <div className="flex flex-col gap-2">
+                        <button 
+                          onClick={() => voiceOverFileInputRef.current?.click()}
+                          disabled={isVoiceOverDecoding}
+                          className={cn(
+                            "w-full flex items-center justify-center gap-2 font-bold py-3 rounded-xl transition-all shadow-lg active:scale-[0.98]",
+                            isVoiceOverDecoding
+                              ? "bg-amber-600 text-white animate-pulse"
+                              : uploadedVoiceOverUrl 
+                                ? "bg-indigo-600 hover:bg-indigo-700 text-white" 
+                                : "bg-[#2a2d35] hover:bg-[#353941] text-gray-300 border border-[#353941]"
+                          )}
+                        >
+                          <Mic size={16} className={cn(isVoiceOverDecoding && "animate-spin")} /> 
+                          {isVoiceOverDecoding 
+                            ? 'DECODING VOICE OVER...' 
+                            : uploadedVoiceOverUrl 
+                              ? 'CHANGE VOICE OVER' 
+                              : 'ADD VOICE OVER (MP3/WAV/M4A)'}
+                        </button>
+                        {uploadedVoiceOverUrl && !isVoiceOverDecoding && (
+                          <div className="flex items-center gap-2 w-full">
+                            <button 
+                              onClick={() => setIsVoiceOverMuted(!isVoiceOverMuted)}
+                              className="flex-1 flex items-center justify-center gap-2 bg-[#2a2d35] hover:bg-[#353941] text-gray-300 border border-[#353941] py-2 rounded-lg text-xs font-bold transition-all"
+                              title={isVoiceOverMuted ? "Unmute Preview" : "Mute Preview"}
+                            >
+                              {isVoiceOverMuted ? (
+                                <>
+                                  <VolumeX size={14} className="text-red-400" />
+                                  <span>UNMUTE PREVIEW</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Volume2 size={14} className="text-indigo-400" />
+                                  <span>MUTE PREVIEW</span>
+                                </>
+                              )}
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setUploadedVoiceOverFile(null);
+                                setUploadedVoiceOverUrl(null);
+                                setUploadedVoiceOverBuffer(null);
+                              }}
+                              className="p-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-lg transition-all"
+                              title="Remove Voice Over"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                      
+                      {isVoiceOverDecoding && (
+                        <p className="text-[10px] text-amber-400 mt-2 text-center font-bold animate-pulse">
+                          ⏳ Decoding audio data...
+                        </p>
+                      )}
+
+                      {!isVoiceOverDecoding && uploadedVoiceOverFile && (
+                        <div className="mt-2 p-2.5 bg-[#2a2d35]/50 rounded-lg border border-[#353941] text-center">
+                          <p className="text-[10px] text-indigo-400 font-bold truncate">
+                            🎤 Voice-over Loaded: {uploadedVoiceOverFile.name}
+                          </p>
+                          {uploadedVoiceOverBuffer && (
+                            <p className="text-[9px] text-gray-400 mt-0.5 font-medium">
+                              Decoded PCM Stream • {(uploadedVoiceOverBuffer.sampleRate / 1000).toFixed(1)}kHz • {uploadedVoiceOverBuffer.numberOfChannels === 2 ? 'Stereo' : 'Mono'} • {Math.round(uploadedVoiceOverBuffer.duration)}s
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {!uploadedVoiceOverFile && !isVoiceOverDecoding && (
+                        <p className="text-[9px] text-gray-500 mt-2 text-center leading-relaxed">
+                          Upload high-quality voice-overs (MP3, WAV, M4A or similar). Play and test them directly synchronized in the live preview and output video!
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Independent Volume Controls */}
+                  {(uploadedMusicUrl || uploadedVoiceOverUrl) && (
+                    <div className="pt-4 border-t border-[#2a2d35] space-y-4">
+                      <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block font-mono tracking-wide text-gray-400">Volume Mixer</label>
+                      
+                      {uploadedMusicUrl && (
+                        <div>
+                          <div className="flex justify-between items-center mb-1">
+                            <span className="text-xs text-gray-400">Background Music (Preview & Export)</span>
+                            <span className="text-xs font-mono text-gray-500">{musicVolume}%</span>
+                          </div>
+                          <input 
+                            type="range" 
+                            min="0" 
+                            max="100" 
+                            value={musicVolume} 
+                            onChange={(e) => setMusicVolume(parseInt(e.target.value))} 
+                            className="w-full accent-emerald-500 cursor-pointer" 
+                          />
+                        </div>
+                      )}
+
+                      {uploadedVoiceOverUrl && (
+                        <div>
+                          <div className="flex justify-between items-center mb-1">
+                            <span className="text-xs text-gray-400">Voice Over (Preview & Export)</span>
+                            <span className="text-xs font-mono text-gray-500">{voiceOverVolume}%</span>
+                          </div>
+                          <input 
+                            type="range" 
+                            min="0" 
+                            max="100" 
+                            value={voiceOverVolume} 
+                            onChange={(e) => setVoiceOverVolume(parseInt(e.target.value))} 
+                            className="w-full accent-indigo-500 cursor-pointer" 
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </motion.div>
             )}
@@ -3870,7 +4231,8 @@ export default function App() {
                               image: null,
                               fontSize: 62,
                               highlightColor: highlightColor,
-                              imageHeight: storyImageHeight
+                              imageHeight: storyImageHeight,
+                              boldParagraphIndex: null
                             }]);
                           }}
                           className="text-[10px] text-red-500 hover:text-red-400 font-bold uppercase transition-colors"
@@ -4092,6 +4454,33 @@ export default function App() {
                             </div>
                           </div>
 
+                          {/* Bold Specific Paragraph Selector */}
+                          <div className="mt-2.5 pt-2.5 border-t border-[#2a2d35]/30">
+                            <label className="text-[10px] text-gray-500 font-bold block mb-1">BOLD PARAGRAPH ONLY</label>
+                            <select 
+                              value={story.boldParagraphIndex === undefined || story.boldParagraphIndex === null ? 'none' : story.boldParagraphIndex}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                const newStories = [...picTextBulkStories];
+                                newStories[index].boldParagraphIndex = val === 'none' ? null : parseInt(val);
+                                setPicTextBulkStories(newStories);
+                              }}
+                              className="w-full bg-[#14161b] border border-[#2a2d35] rounded px-2.5 py-1.5 text-xs text-gray-300 outline-none focus:border-blue-500"
+                            >
+                              <option value="none">None (Regular Weight)</option>
+                              {story.text.split('\n').map((para: string, idx: number) => {
+                                const cleanPara = para.trim();
+                                const displayNum = idx + 1;
+                                const previewText = cleanPara.length > 30 ? cleanPara.substring(0, 30) + '...' : cleanPara;
+                                return (
+                                  <option key={idx} value={idx}>
+                                    Paragraph {displayNum}: {previewText}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </div>
+
                           <div className="flex items-center justify-between pt-2.5 border-t border-[#252a32]">
                             <label className="flex items-center gap-2 cursor-pointer text-[10px] text-gray-400 hover:text-gray-300 font-bold uppercase tracking-wider">
                               <input 
@@ -4250,6 +4639,7 @@ export default function App() {
                       storyImage={story.image}
                       storyImageHeight={story.imageHeight !== undefined ? story.imageHeight : storyImageHeight}
                       boxHighlight={story.boxHighlight}
+                      boldParagraphIndex={story.boldParagraphIndex !== undefined ? story.boldParagraphIndex : null}
                       innerRef={originalIndex === 0 ? previewRef : null} 
                     />
                   </div>
@@ -4290,6 +4680,7 @@ export default function App() {
                       hColor={story.highlightColor}
                       fSize={story.fontSize}
                       boxHighlight={story.boxHighlight}
+                      boldParagraphIndex={story.boldParagraphIndex !== undefined ? story.boldParagraphIndex : null}
                       innerRef={originalIndex === 0 ? previewRef : null} 
                     />
                   </div>
