@@ -15,6 +15,7 @@ import {
   Zap,
   X,
   Play,
+  Pause,
   Film,
   Loader2,
   MoveRight,
@@ -170,7 +171,56 @@ export default function App() {
     return 'video/webm';
   }, []);
 
-  const recordCanvasToMp4 = async (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0, audioStartOffset = 0) => {
+  const getActiveHighlightIndex = (
+    text: string,
+    currentTime: number,
+    totalDuration: number,
+    highlightStyle: 'word-accumulate' | 'word-single' | 'sentence-single' | 'none'
+  ) => {
+    if (highlightStyle === 'none' || !text) return 0;
+    const cleanText = text.replace(/\[\[/g, '').replace(/\]\]/g, '').replace(/\[/g, '').replace(/\]/g, '');
+    const cleanParagraphs = cleanText.split('\n');
+    
+    if (highlightStyle === 'sentence-single') {
+      let totalSentences = 0;
+      cleanParagraphs.forEach(para => {
+        const sentenceParts = para.split(/([.!?]+(?:\s+|$))/).filter(s => s.length > 0);
+        const fullSentences: string[] = [];
+        for (let i = 0; i < sentenceParts.length; i++) {
+          if (i % 2 === 0) {
+            fullSentences.push(sentenceParts[i]);
+          } else if (fullSentences.length > 0) {
+            fullSentences[fullSentences.length - 1] += sentenceParts[i];
+          } else {
+            fullSentences.push(sentenceParts[i]);
+          }
+        }
+        totalSentences += fullSentences.length;
+      });
+      const progress = Math.max(0, Math.min(0.999, currentTime / (totalDuration || 1)));
+      return Math.floor(progress * (totalSentences || 1));
+    } else {
+      let totalWords = 0;
+      cleanParagraphs.forEach(para => {
+        const tokens = para.split(/(\s+)/).filter(t => t.length > 0);
+        const wordsOnly = tokens.filter(t => !/^\s+$/.test(t));
+        totalWords += wordsOnly.length;
+      });
+      const progress = Math.max(0, Math.min(0.999, currentTime / (totalDuration || 1)));
+      return Math.floor(progress * (totalWords || 1));
+    }
+  };
+
+  const recordCanvasToMp4 = async (
+    canvas: HTMLCanvasElement, 
+    duration: number, 
+    onProgress?: (p: number) => void, 
+    videoUrl?: string | null, 
+    overlayOpacity: number = 0, 
+    audioStartOffset = 0, 
+    node?: HTMLElement | null,
+    storyTextToSync?: string
+  ) => {
     // Check for WebCodecs support
     if (!('VideoEncoder' in window) || !('VideoFrame' in window)) {
       throw new Error('WebCodecs API not supported');
@@ -184,6 +234,7 @@ export default function App() {
 
     const fps = 30;
     const totalFrames = duration * fps;
+    let lastCapturedCanvas: HTMLCanvasElement = canvas;
 
     // Create a recording canvas that we will draw into
     const offscreen = document.createElement('canvas');
@@ -291,6 +342,8 @@ export default function App() {
       encoder.configure(config);
     }
 
+    let lastActiveIndex: number | null = null;
+
     try {
       for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
         if (cancelExportRef.current) {
@@ -300,6 +353,43 @@ export default function App() {
         if (encoder.state === 'closed') throw new Error('Encoder closed unexpectedly');
 
         const timestamp = (frameIndex * 1000000) / fps;
+
+        // Dynamic frame capture for voice over highlights
+        const pageRelativeTime = frameIndex / fps;
+        const currentActiveIndex = (uploadedVoiceOverBuffer && voiceOverHighlightStyle !== 'none' && storyTextToSync)
+          ? getActiveHighlightIndex(storyTextToSync, pageRelativeTime, duration, voiceOverHighlightStyle)
+          : 0;
+
+        const isCaptureFrame = (frameIndex === 0) || 
+                              (frameIndex === totalFrames - 1) || 
+                              (uploadedVoiceOverBuffer && voiceOverHighlightStyle !== 'none' && currentActiveIndex !== lastActiveIndex);
+
+        if (node && isCaptureFrame) {
+          const currentTimeSec = audioStartOffset + (frameIndex / fps);
+          if (uploadedVoiceOverBuffer && voiceOverHighlightStyle !== 'none') {
+            setExportVoiceOverTime(currentTimeSec);
+            lastActiveIndex = currentActiveIndex;
+            // Short delay to ensure React finishes rendering highlight transitions before we take a snapshot
+            await bgDelay(16);
+          }
+          try {
+            const freshCanvas = await toCanvas(node, {
+              pixelRatio: 1,
+              cacheBust: true,
+              width: 1080,
+              height: 1920,
+              style: {
+                transform: 'none',
+                transformOrigin: 'top left',
+                width: '1080px',
+                height: '1920px'
+              }
+            });
+            lastCapturedCanvas = freshCanvas;
+          } catch (err) {
+            console.warn("Failed to capture dynamic frame canvas at timestamp:", currentTimeSec, err);
+          }
+        }
         
         // Clear canvas
         ctx.fillStyle = '#000';
@@ -353,7 +443,7 @@ export default function App() {
         }
 
         // 2. Draw UI snapshot on top
-        ctx.drawImage(canvas, 0, 0, width, height);
+        ctx.drawImage(lastCapturedCanvas, 0, 0, width, height);
 
         // We create a new VideoFrame using the offscreen canvas. 
         const frame = new VideoFrame(offscreen, { 
@@ -483,21 +573,40 @@ export default function App() {
     }
   };
 
-  const recordWithFallback = async (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0, audioStartOffset = 0) => {
+  const recordWithFallback = async (
+    canvas: HTMLCanvasElement, 
+    duration: number, 
+    onProgress?: (p: number) => void, 
+    videoUrl?: string | null, 
+    overlayOpacity: number = 0, 
+    audioStartOffset = 0, 
+    node?: HTMLElement | null,
+    storyTextToSync?: string
+  ) => {
     if ('VideoEncoder' in window) {
       try {
-        return await recordCanvasToMp4(canvas, duration, onProgress, videoUrl, overlayOpacity, audioStartOffset);
+        return await recordCanvasToMp4(canvas, duration, onProgress, videoUrl, overlayOpacity, audioStartOffset, node, storyTextToSync);
       } catch (err) {
         console.error('VideoEncoder failed, falling back to MediaRecorder:', err);
       }
     }
-    return await recordCanvasMediaRecorder(canvas, duration, onProgress, videoUrl, overlayOpacity, audioStartOffset);
+    return await recordCanvasMediaRecorder(canvas, duration, onProgress, videoUrl, overlayOpacity, audioStartOffset, node, storyTextToSync);
   };
 
-  const recordCanvasMediaRecorder = (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0, audioStartOffset = 0): Promise<Blob> => {
+  const recordCanvasMediaRecorder = (
+    canvas: HTMLCanvasElement, 
+    duration: number, 
+    onProgress?: (p: number) => void, 
+    videoUrl?: string | null, 
+    overlayOpacity: number = 0, 
+    audioStartOffset = 0, 
+    node?: HTMLElement | null,
+    storyTextToSync?: string
+  ): Promise<Blob> => {
     return new Promise(async (resolve, reject) => {
       const width = canvas.width;
       const height = canvas.height;
+      let lastCapturedCanvas: HTMLCanvasElement = canvas;
       const offscreen = document.createElement('canvas');
       offscreen.width = width;
       offscreen.height = height;
@@ -611,6 +720,8 @@ export default function App() {
         const fps = 30;
         const totalFrames = duration * fps;
         
+        let lastActiveIndex: number | null = null;
+        
         for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
           if (cancelExportRef.current) {
             try {
@@ -620,6 +731,44 @@ export default function App() {
             } catch (e) {}
             throw new Error('Export cancelled');
           }
+
+          // Dynamic frame capture for voice over highlights inside media recorder fallback
+          const pageRelativeTime = frameIndex / fps;
+          const currentActiveIndex = (uploadedVoiceOverBuffer && voiceOverHighlightStyle !== 'none' && storyTextToSync)
+            ? getActiveHighlightIndex(storyTextToSync, pageRelativeTime, duration, voiceOverHighlightStyle)
+            : 0;
+
+          const isCaptureFrame = (frameIndex === 0) || 
+                                (frameIndex === totalFrames - 1) || 
+                                (uploadedVoiceOverBuffer && voiceOverHighlightStyle !== 'none' && currentActiveIndex !== lastActiveIndex);
+
+          if (node && isCaptureFrame) {
+            const currentTimeSec = audioStartOffset + (frameIndex / fps);
+            if (uploadedVoiceOverBuffer && voiceOverHighlightStyle !== 'none') {
+              setExportVoiceOverTime(currentTimeSec);
+              lastActiveIndex = currentActiveIndex;
+              // Short delay to ensure React finishes rendering highlight transitions before we take a snapshot
+              await bgDelay(16);
+            }
+            try {
+              const freshCanvas = await toCanvas(node, {
+                pixelRatio: 1,
+                cacheBust: true,
+                width: 1080,
+                height: 1920,
+                style: {
+                  transform: 'none',
+                  transformOrigin: 'top left',
+                  width: '1080px',
+                  height: '1920px'
+                }
+              });
+              lastCapturedCanvas = freshCanvas;
+            } catch (err) {
+              console.warn("Failed to capture dynamic frame canvas in media recorder fallback at timestamp:", currentTimeSec, err);
+            }
+          }
+
           // Clear and Draw
           ctx.fillStyle = '#000';
           ctx.fillRect(0, 0, width, height);
@@ -666,7 +815,7 @@ export default function App() {
             }
           }
 
-          ctx.drawImage(canvas, 0, 0, width, height);
+          ctx.drawImage(lastCapturedCanvas, 0, 0, width, height);
           
           if (onProgress) onProgress(Math.floor((frameIndex / totalFrames) * 100));
           
@@ -903,8 +1052,20 @@ export default function App() {
   const [uploadedVoiceOverBuffer, setUploadedVoiceOverBuffer] = useState<AudioBuffer | null>(null);
   const [isVoiceOverMuted, setIsVoiceOverMuted] = useState<boolean>(false);
   const [isVoiceOverDecoding, setIsVoiceOverDecoding] = useState<boolean>(false);
+  const [voiceOverHighlightStyle, setVoiceOverHighlightStyle] = useState<'word-accumulate' | 'word-single' | 'sentence-single' | 'none'>('word-accumulate');
+  const [voiceOverPlaybackTime, setVoiceOverPlaybackTime] = useState<number>(0);
+  const [exportVoiceOverTime, setExportVoiceOverTime] = useState<number | null>(null);
   const [musicVolume, setMusicVolume] = useState<number>(50); // percentage 0-100
   const [voiceOverVolume, setVoiceOverVolume] = useState<number>(100); // percentage 0-100
+  const [isVoiceOverPlaying, setIsVoiceOverPlaying] = useState<boolean>(false);
+  const [syncHighlightColor, setSyncHighlightColor] = useState<string>('#f59e0b');
+
+  const formatTime = (seconds: number) => {
+    if (isNaN(seconds) || seconds === null || seconds === undefined) return "0:00";
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
 
   // Voice Over Refs
   const voiceOverFileInputRef = useRef<HTMLInputElement>(null);
@@ -941,14 +1102,55 @@ export default function App() {
     if (voiceOverElementRef.current) {
       voiceOverElementRef.current.volume = voiceOverVolume / 100;
       if (uploadedVoiceOverUrl && !isVoiceOverMuted && !isExporting) {
-        voiceOverElementRef.current.play().catch(err => {
-          console.log('Autoplay blocked. Pressing play after click will work.', err);
-        });
+        voiceOverElementRef.current.play()
+          .then(() => setIsVoiceOverPlaying(true))
+          .catch(err => {
+            console.log('Autoplay blocked. Pressing play after click will work.', err);
+            setIsVoiceOverPlaying(false);
+          });
       } else {
         voiceOverElementRef.current.pause();
+        setIsVoiceOverPlaying(false);
       }
     }
   }, [uploadedVoiceOverUrl, isVoiceOverMuted, isExporting, voiceOverVolume]);
+
+  useEffect(() => {
+    const voEl = voiceOverElementRef.current;
+    if (!voEl) return;
+
+    const handleTimeUpdate = () => {
+      setVoiceOverPlaybackTime(voEl.currentTime);
+    };
+
+    const handleEnded = () => {
+      setVoiceOverPlaybackTime(0);
+      setIsVoiceOverPlaying(false);
+    };
+
+    const handlePlayState = () => {
+      setIsVoiceOverPlaying(true);
+    };
+
+    const handlePauseState = () => {
+      setIsVoiceOverPlaying(false);
+    };
+
+    voEl.addEventListener('timeupdate', handleTimeUpdate);
+    voEl.addEventListener('ended', handleEnded);
+    voEl.addEventListener('pause', handlePauseState);
+    voEl.addEventListener('play', handlePlayState);
+
+    // Initial check just in case it is already loaded/playing
+    setIsVoiceOverPlaying(!voEl.paused);
+
+    return () => {
+      voEl.removeEventListener('timeupdate', handleTimeUpdate);
+      voEl.removeEventListener('ended', handleEnded);
+      voEl.removeEventListener('pause', handlePauseState);
+      voEl.removeEventListener('play', handlePlayState);
+    };
+  }, [uploadedVoiceOverUrl]);
 
   const bgFileInputRef = useRef<HTMLInputElement>(null);
   const videoBgInputRef = useRef<HTMLInputElement>(null);
@@ -1327,16 +1529,7 @@ export default function App() {
     e.target.value = '';
   };
 
-  const handleBulkDownload = useCallback(async () => {
-    const cardElements = document.querySelectorAll('.bulk-poster-card');
-    if (cardElements.length === 0) return;
-
-    cancelExportRef.current = false;
-    setIsExporting(true);
-    setExportProgress(0);
-    setBulkExportInfo(`Initializing bulk export...`);
-    
-    // Proportional display distribution logic for voice-over
+  const getPageAlignedTimes = useCallback(() => {
     const activePages = activeTab === 'pictext'
       ? picTextBulkStories
       : bulkStories.filter(s => s.text.trim().length > 0);
@@ -1365,6 +1558,23 @@ export default function App() {
       return offset;
     });
 
+    return { pageDurations, pageOffsets };
+  }, [activeTab, picTextBulkStories, bulkStories, uploadedVoiceOverBuffer, exportDuration]);
+
+  const handleBulkDownload = useCallback(async () => {
+    const cardElements = document.querySelectorAll('.bulk-poster-card');
+    if (cardElements.length === 0) return;
+
+    cancelExportRef.current = false;
+    setIsExporting(true);
+    setExportProgress(0);
+    setBulkExportInfo(`Initializing bulk export...`);
+    
+    const { pageDurations, pageOffsets } = getPageAlignedTimes();
+    const activePages = activeTab === 'pictext'
+      ? picTextBulkStories
+      : bulkStories.filter(s => s.text.trim().length > 0);
+
     // Dynamically import jszip inside the handler to keep the initial bundle smaller
     const JSZip = (await import('jszip')).default;
     const zip = new JSZip();
@@ -1382,6 +1592,7 @@ export default function App() {
         
         const pageDurationVal = pageDurations[i] || exportDuration;
         const pageOffsetVal = pageOffsets[i] || 0;
+        const originalStoryText = activePages[i]?.text || '';
 
         const blob = await new Promise<Blob>((resolve, reject) => {
           toCanvas(node, {
@@ -1408,7 +1619,7 @@ export default function App() {
                 }
                 const overallProgress = Math.floor(((i + (cardProgress / 100)) / total) * 100);
                 setExportProgress(overallProgress);
-              }, videoBackground, bgImageOverlay, pageOffsetVal);
+              }, videoBackground, bgImageOverlay, pageOffsetVal, node, originalStoryText);
               resolve(videoBlob);
             } catch (err) {
               console.error('Bulk export error:', err);
@@ -1587,7 +1798,7 @@ export default function App() {
             const blob = await recordWithFallback(canvas, exportDuration, (p) => {
               if (cancelExportRef.current) return;
               setExportProgress(p);
-            }, videoBackground, bgImageOverlay);
+            }, videoBackground, bgImageOverlay, 0, node, storyText);
             
             if (cancelExportRef.current) {
               throw new Error('Export cancelled');
@@ -1808,6 +2019,174 @@ export default function App() {
     });
   };
 
+  const renderSyncedText = (
+    text: string, 
+    hColor: string, 
+    currentTime: number | null | undefined, 
+    totalDuration: number, 
+    highlightStyle: 'word-accumulate' | 'word-single' | 'sentence-single' | 'none',
+    useBox?: boolean,
+    boldParagraphIndex: number | null = null
+  ) => {
+    const hasVOTime = currentTime !== null && currentTime !== undefined && highlightStyle !== 'none';
+    
+    if (!hasVOTime) {
+      return text.split('\n').map((para, index) => {
+        const isBold = index === boldParagraphIndex;
+        return (
+          <div 
+            key={index}
+            style={{
+              fontWeight: isBold ? '800' : undefined,
+              whiteSpace: 'pre-wrap'
+            }}
+          >
+            {para === '' ? <br /> : renderStoryText(para, hColor, useBox)}
+          </div>
+        );
+      });
+    }
+
+    const activeColor = syncHighlightColor || hColor || '#f59e0b';
+
+    // Clean text by removing any bracket highlighting [text] or [[text]]
+    const cleanText = text.replace(/\[\[/g, '').replace(/\]\]/g, '').replace(/\[/g, '').replace(/\]/g, '');
+    const cleanParagraphs = cleanText.split('\n');
+    const isBoxStyle = useBox !== undefined ? useBox : boxHighlight;
+
+    if (highlightStyle === 'sentence-single') {
+      let totalSentences = 0;
+      const paragraphsWithSentences = cleanParagraphs.map(para => {
+        const sentenceParts = para.split(/([.!?]+(?:\s+|$))/).filter(s => s.length > 0);
+        const fullSentences: string[] = [];
+        for (let i = 0; i < sentenceParts.length; i++) {
+          if (i % 2 === 0) {
+            fullSentences.push(sentenceParts[i]);
+          } else if (fullSentences.length > 0) {
+            fullSentences[fullSentences.length - 1] += sentenceParts[i];
+          } else {
+            fullSentences.push(sentenceParts[i]);
+          }
+        }
+        totalSentences += fullSentences.length;
+        return fullSentences;
+      });
+
+      const progress = Math.max(0, Math.min(0.999, (currentTime || 0) / (totalDuration || 1)));
+      const activeSentenceIndex = Math.floor(progress * totalSentences);
+
+      let globalSentenceIdx = 0;
+      return paragraphsWithSentences.map((sentences, paraIdx) => {
+        const isBold = paraIdx === boldParagraphIndex;
+        return (
+          <div 
+            key={`p-${paraIdx}`} 
+            style={{ fontWeight: isBold ? '800' : undefined, whiteSpace: 'pre-wrap' }} 
+            className="mb-3"
+          >
+            {sentences.length === 0 ? <br /> : sentences.map((sentence, sentIdx) => {
+              const currentIdx = globalSentenceIdx;
+              globalSentenceIdx++;
+              const isActive = currentIdx === activeSentenceIndex;
+
+              if (isActive) {
+                if (isBoxStyle) {
+                  return (
+                    <span 
+                      key={`sent-${sentIdx}`}
+                      style={{ backgroundColor: activeColor, color: '#ffffff' }}
+                      className="px-2 py-0.5 rounded-lg mx-1 inline font-extrabold shadow-sm text-white transition-all scale-[1.01]"
+                    >
+                      {sentence}
+                    </span>
+                  );
+                } else {
+                  return (
+                    <span 
+                      key={`sent-${sentIdx}`}
+                      style={{ color: activeColor }}
+                      className={cn("font-extrabold transition-all scale-[1.01]", highlightUnderline ? "underline decoration-2 underline-offset-4" : "")}
+                    >
+                      {sentence}
+                    </span>
+                  );
+                }
+              }
+              return <span key={`sent-${sentIdx}`}>{sentence}</span>;
+            })}
+          </div>
+        );
+      });
+    }
+
+    // Word highlighting (either word-accumulate or word-single)
+    let totalWords = 0;
+    const paragraphsWithTokens = cleanParagraphs.map(para => {
+      const tokens = para.split(/(\s+)/).filter(t => t.length > 0);
+      const wordsOnly = tokens.filter(t => !/^\s+$/.test(t));
+      totalWords += wordsOnly.length;
+      return { tokens, wordsOnlyCount: wordsOnly.length };
+    });
+
+    const progress = Math.max(0, Math.min(0.999, (currentTime || 0) / (totalDuration || 1)));
+    const activeWordIndex = Math.floor(progress * totalWords);
+
+    let globalWordIdx = 0;
+    return paragraphsWithTokens.map((paraData, paraIdx) => {
+      const isBold = paraIdx === boldParagraphIndex;
+      return (
+        <div 
+          key={`p-${paraIdx}`} 
+          style={{ fontWeight: isBold ? '800' : undefined, whiteSpace: 'pre-wrap' }} 
+          className="mb-3"
+        >
+          {paraData.tokens.length === 0 ? <br /> : paraData.tokens.map((token, tokIdx) => {
+            const isWhitespace = /^\s+$/.test(token);
+            if (isWhitespace) {
+              return <span key={`tok-${tokIdx}`}>{token}</span>;
+            }
+
+            const currentWordIdx = globalWordIdx;
+            globalWordIdx++;
+
+            let isHighlighted = false;
+            if (highlightStyle === 'word-accumulate') {
+              isHighlighted = currentWordIdx <= activeWordIndex;
+            } else if (highlightStyle === 'word-single') {
+              isHighlighted = currentWordIdx === activeWordIndex;
+            }
+
+            if (isHighlighted) {
+              if (isBoxStyle) {
+                return (
+                  <span 
+                    key={`tok-${tokIdx}`}
+                    style={{ backgroundColor: activeColor, color: '#ffffff' }}
+                    className="px-1.5 py-0.5 rounded mx-0.5 inline font-extrabold shadow-sm text-white transition-all scale-[1.01]"
+                  >
+                    {token}
+                  </span>
+                );
+              } else {
+                return (
+                  <span 
+                    key={`tok-${tokIdx}`}
+                    style={{ color: activeColor }}
+                    className={cn("font-extrabold transition-all scale-[1.01]", highlightUnderline ? "underline decoration-2 underline-offset-4" : "")}
+                  >
+                    {token}
+                  </span>
+                );
+              }
+            }
+
+            return <span key={`tok-${tokIdx}`}>{token}</span>;
+          })}
+        </div>
+      );
+    });
+  };
+
   const fonts = [
     { label: 'Roboto', value: 'font-roboto' },
     { label: 'Open Sans', value: 'font-open-sans' },
@@ -1826,6 +2205,21 @@ export default function App() {
     { label: 'PT Serif', value: 'font-pt-serif' },
     { label: 'Playfair Display', value: 'font-playfair' },
   ];
+
+  const getPageVOTime = (index: number) => {
+    if (!uploadedVoiceOverUrl) return null;
+    const currentGlobalTime = isExporting ? exportVoiceOverTime : voiceOverPlaybackTime;
+    if (currentGlobalTime === null || currentGlobalTime === undefined) return null;
+    const { pageDurations, pageOffsets } = getPageAlignedTimes();
+    const offset = pageOffsets[index] || 0;
+    const duration = pageDurations[index] || exportDuration;
+    return Math.max(0, Math.min(duration, currentGlobalTime - offset));
+  };
+
+  const getPageVODuration = (index: number) => {
+    const { pageDurations } = getPageAlignedTimes();
+    return pageDurations[index] || exportDuration;
+  };
 
   const posterProps = {
     bgStyle, bgColor, gradEnd, avatarBorder, avatarBorderColor, profileImage, 
@@ -1880,26 +2274,22 @@ export default function App() {
       />
 
       {/* Background Music Audio Element */}
-      {uploadedMusicUrl && (
-        <audio 
-          ref={audioElementRef}
-          src={uploadedMusicUrl} 
-          loop 
-          muted={isMusicMuted || isExporting}
-          style={{ display: 'none' }}
-        />
-      )}
+      <audio 
+        ref={audioElementRef}
+        src={uploadedMusicUrl || undefined} 
+        loop 
+        muted={isMusicMuted || isExporting}
+        style={{ display: 'none' }}
+      />
 
       {/* Voice Over Audio Element */}
-      {uploadedVoiceOverUrl && (
-        <audio 
-          ref={voiceOverElementRef}
-          src={uploadedVoiceOverUrl} 
-          loop 
-          muted={isVoiceOverMuted || isExporting}
-          style={{ display: 'none' }}
-        />
-      )}
+      <audio 
+        ref={voiceOverElementRef}
+        src={uploadedVoiceOverUrl || undefined} 
+        loop 
+        muted={isVoiceOverMuted || isExporting}
+        style={{ display: 'none' }}
+      />
 
       {/* Hidden CSV Input */}
       <input 
@@ -3569,6 +3959,162 @@ export default function App() {
                           Upload high-quality voice-overs (MP3, WAV, M4A or similar). Play and test them directly synchronized in the live preview and output video!
                         </p>
                       )}
+
+                      {uploadedVoiceOverUrl && !isVoiceOverDecoding && (
+                        <div className="mt-3.5 pt-3.5 border-t border-[#30343f]/60 space-y-2">
+                          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Voice-Over Highlight Sync</label>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <button
+                              onClick={() => setVoiceOverHighlightStyle('word-accumulate')}
+                              className={cn(
+                                "py-1.5 px-2 text-[10px] font-bold rounded border transition-all text-center uppercase tracking-wider",
+                                voiceOverHighlightStyle === 'word-accumulate'
+                                  ? "bg-indigo-600/20 text-indigo-400 border-indigo-600/80"
+                                  : "bg-[#252830] text-gray-400 border-transparent hover:bg-[#2e323c]"
+                              )}
+                            >
+                              Accumulate Words
+                            </button>
+                            <button
+                              onClick={() => setVoiceOverHighlightStyle('word-single')}
+                              className={cn(
+                                "py-1.5 px-2 text-[10px] font-bold rounded border transition-all text-center uppercase tracking-wider",
+                                voiceOverHighlightStyle === 'word-single'
+                                  ? "bg-indigo-600/20 text-indigo-400 border-indigo-600/80"
+                                  : "bg-[#252830] text-gray-400 border-transparent hover:bg-[#2e323c]"
+                              )}
+                            >
+                              Single Word
+                            </button>
+                            <button
+                              onClick={() => setVoiceOverHighlightStyle('sentence-single')}
+                              className={cn(
+                                "py-1.5 px-2 text-[10px] font-bold rounded border transition-all text-center uppercase tracking-wider",
+                                voiceOverHighlightStyle === 'sentence-single'
+                                  ? "bg-indigo-600/20 text-indigo-400 border-indigo-600/80"
+                                  : "bg-[#252830] text-gray-400 border-transparent hover:bg-[#2e323c]"
+                              )}
+                            >
+                              Sentence
+                            </button>
+                            <button
+                              onClick={() => setVoiceOverHighlightStyle('none')}
+                              className={cn(
+                                "py-1.5 px-2 text-[10px] font-bold rounded border transition-all text-center uppercase tracking-wider",
+                                voiceOverHighlightStyle === 'none'
+                                  ? "bg-indigo-600/20 text-indigo-400 border-indigo-600/80"
+                                  : "bg-[#252830] text-gray-400 border-transparent hover:bg-[#2e323c]"
+                              )}
+                            >
+                              No Highlights
+                            </button>
+                          </div>
+
+                          {voiceOverHighlightStyle !== 'none' && (
+                            <div className="bg-[#181a21]/50 border border-[#2e323c]/40 rounded-xl p-3 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <label className="text-[10px] font-extrabold text-gray-400 uppercase tracking-style block">Sync Highlight Color</label>
+                                <span className="text-[9px] text-indigo-400 font-mono">{syncHighlightColor}</span>
+                              </div>
+                              <div className="flex items-center gap-2.5">
+                                <input 
+                                  type="color" 
+                                  value={syncHighlightColor} 
+                                  onChange={(e) => setSyncHighlightColor(e.target.value)} 
+                                  className="w-8 h-8 rounded-lg border border-[#353941]/60 cursor-pointer bg-transparent flex-shrink-0" 
+                                />
+                                <input 
+                                  type="text" 
+                                  value={syncHighlightColor} 
+                                  onChange={(e) => setSyncHighlightColor(e.target.value)} 
+                                  className="w-full bg-[#14161b] border border-[#2a2d35] rounded-md px-2.5 py-1 text-[10px] font-mono outline-none focus:border-indigo-500 text-gray-300" 
+                                />
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Beautiful Interactive Wave/Scrub Player */}
+                          <div className="mt-3.5 bg-[#181a21]/80 border border-[#2e323c]/65 rounded-xl p-3 space-y-3 shadow-md">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-extrabold text-indigo-400 uppercase tracking-widest">LIVE SYNC PREVIEW PLAYER</span>
+                              <span className="text-[10px] font-mono text-gray-400 bg-[#252830] py-0.5 px-2 rounded border border-[#30343f]">
+                                {formatTime(voiceOverPlaybackTime)} / {formatTime(uploadedVoiceOverBuffer?.duration || 0)}
+                              </span>
+                            </div>
+
+                            {/* Interactive Scrub Bar */}
+                            <div 
+                              className="h-2.5 w-full bg-[#0e1014] rounded-full overflow-hidden cursor-pointer relative group border border-[#2e323c]/40"
+                              onClick={(e) => {
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                const clickX = e.clientX - rect.left;
+                                const pct = Math.max(0, Math.min(1, clickX / rect.width));
+                                const duration = uploadedVoiceOverBuffer?.duration || 10;
+                                const targetTime = pct * duration;
+                                if (voiceOverElementRef.current) {
+                                  voiceOverElementRef.current.currentTime = targetTime;
+                                  setVoiceOverPlaybackTime(targetTime);
+                                }
+                              }}
+                            >
+                              <div 
+                                className="h-full bg-indigo-500 rounded-full transition-all group-hover:bg-indigo-400"
+                                style={{ width: `${Math.min(100, Math.max(0, (voiceOverPlaybackTime / (uploadedVoiceOverBuffer?.duration || 1)) * 105))}%` }}
+                              />
+                              <div 
+                                className="absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow border border-indigo-500/50"
+                                style={{ left: `calc(${Math.min(100, Math.max(0, (voiceOverPlaybackTime / (uploadedVoiceOverBuffer?.duration || 1)) * 100))}% - 7px)` }}
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-between pt-1">
+                              <button
+                                onClick={() => {
+                                  if (voiceOverElementRef.current) {
+                                    if (isVoiceOverPlaying) {
+                                      voiceOverElementRef.current.pause();
+                                    } else {
+                                      voiceOverElementRef.current.play().catch(err => console.log('Bypass play fail:', err));
+                                    }
+                                  }
+                                }}
+                                className={cn(
+                                  "py-1.5 px-3 rounded-lg text-[10px] font-bold transition-all flex items-center justify-center gap-1.5 active:scale-95 shadow-md",
+                                  isVoiceOverPlaying 
+                                    ? "bg-rose-600/20 text-rose-400 border border-rose-600/30 hover:bg-rose-600/30" 
+                                    : "bg-indigo-500 hover:bg-indigo-600 text-white shadow-indigo-500/20"
+                                )}
+                              >
+                                {isVoiceOverPlaying ? (
+                                  <>
+                                    <Pause size={12} strokeWidth={2.5} />
+                                    <span>PAUSE PREVIEW</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Play size={12} strokeWidth={2.5} />
+                                    <span>PLAY PREVIEW</span>
+                                  </>
+                                )}
+                              </button>
+
+                              <button
+                                onClick={() => {
+                                  if (voiceOverElementRef.current) {
+                                    voiceOverElementRef.current.currentTime = 0;
+                                    setVoiceOverPlaybackTime(0);
+                                    voiceOverElementRef.current.play().catch(err => console.log('Bypass restart play fail:', err));
+                                  }
+                                }}
+                                className="py-1.5 px-3 bg-[#242730] hover:bg-[#2d313d] text-gray-300 font-bold rounded-lg text-[10px] transition-all flex items-center justify-center gap-1.5 border border-[#30343f] active:scale-95"
+                              >
+                                <RotateCcw size={12} strokeWidth={2.5} />
+                                <span>RESTART</span>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -4603,6 +5149,10 @@ export default function App() {
                   fSize={fontSize}
                   boxHighlight={boxHighlight}
                   innerRef={previewRef} 
+                  voiceOverTime={uploadedVoiceOverUrl ? (isExporting ? exportVoiceOverTime : voiceOverPlaybackTime) : null}
+                  voiceOverDuration={uploadedVoiceOverBuffer ? uploadedVoiceOverBuffer.duration : exportDuration}
+                  voiceOverHighlightStyle={voiceOverHighlightStyle}
+                  renderSyncedText={renderSyncedText}
                 />
               </div>
             </div>
@@ -4641,6 +5191,10 @@ export default function App() {
                       boxHighlight={story.boxHighlight}
                       boldParagraphIndex={story.boldParagraphIndex !== undefined ? story.boldParagraphIndex : null}
                       innerRef={originalIndex === 0 ? previewRef : null} 
+                      voiceOverTime={getPageVOTime(displayIndex)}
+                      voiceOverDuration={getPageVODuration(displayIndex)}
+                      voiceOverHighlightStyle={voiceOverHighlightStyle}
+                      renderSyncedText={renderSyncedText}
                     />
                   </div>
                 </div>
@@ -4682,6 +5236,10 @@ export default function App() {
                       boxHighlight={story.boxHighlight}
                       boldParagraphIndex={story.boldParagraphIndex !== undefined ? story.boldParagraphIndex : null}
                       innerRef={originalIndex === 0 ? previewRef : null} 
+                      voiceOverTime={getPageVOTime(displayIndex)}
+                      voiceOverDuration={getPageVODuration(displayIndex)}
+                      voiceOverHighlightStyle={voiceOverHighlightStyle}
+                      renderSyncedText={renderSyncedText}
                     />
                   </div>
                 </div>
@@ -4714,7 +5272,8 @@ function Poster({
   bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly, hColor, removePaddingWhenHidden,
   videoBackground, isExporting, boldParagraphIndex,
   storyImage, storyImageHeight, storyImageRadius, storyImageFit, isPicTextMode,
-  boxHighlight, imagePosition
+  boxHighlight, imagePosition,
+  voiceOverTime, voiceOverDuration, voiceOverHighlightStyle, renderSyncedText
 }: any) {
   const isCardPadded = showCard || !removePaddingWhenHidden;
   const isBlur = scribbleStyle === 'blur' || scribbleStyle === 'title-blur';
@@ -4785,21 +5344,25 @@ function Poster({
               fontStyle: fontStyle === 'italic' ? 'italic' : 'normal',
             }}
           >
-            {storyText.split('\n').map((para, index) => {
-              const isBold = index === boldParagraphIndex;
-              return (
-                <div 
-                  key={index}
-                  style={{
-                    fontWeight: isBold ? '800' : undefined,
-                    whiteSpace: 'pre-wrap',
-                    marginBottom: '1.5em'
-                  }}
-                >
-                  {para === '' ? <br /> : renderStoryText(para, hColor, boxHighlight)}
-                </div>
-              );
-            })}
+            {voiceOverTime !== null && voiceOverTime !== undefined && voiceOverHighlightStyle !== 'none' && renderSyncedText ? (
+              renderSyncedText(storyText, hColor, voiceOverTime, voiceOverDuration, voiceOverHighlightStyle, boxHighlight, boldParagraphIndex)
+            ) : (
+              storyText.split('\n').map((para, index) => {
+                const isBold = index === boldParagraphIndex;
+                return (
+                  <div 
+                    key={index}
+                    style={{
+                      fontWeight: isBold ? '800' : undefined,
+                      whiteSpace: 'pre-wrap',
+                      marginBottom: '1.5em'
+                    }}
+                  >
+                    {para === '' ? <br /> : renderStoryText(para, hColor, boxHighlight)}
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
 
@@ -5087,20 +5650,24 @@ function Poster({
                   fontStyle: fontStyle === 'italic' ? 'italic' : 'normal',
                 }}
               >
-                {storyText.split('\n').map((para, index) => {
-                  const isBold = index === boldParagraphIndex;
-                  return (
-                    <div 
-                      key={index}
-                      style={{
-                        fontWeight: isBold ? '800' : undefined,
-                        whiteSpace: 'pre-wrap'
-                      }}
-                    >
-                      {para === '' ? <br /> : renderStoryText(para, hColor, boxHighlight)}
-                    </div>
-                  );
-                })}
+                {voiceOverTime !== null && voiceOverTime !== undefined && voiceOverHighlightStyle !== 'none' && renderSyncedText ? (
+                  renderSyncedText(storyText, hColor, voiceOverTime, voiceOverDuration, voiceOverHighlightStyle, boxHighlight, boldParagraphIndex)
+                ) : (
+                  storyText.split('\n').map((para, index) => {
+                    const isBold = index === boldParagraphIndex;
+                    return (
+                      <div 
+                        key={index}
+                        style={{
+                          fontWeight: isBold ? '800' : undefined,
+                          whiteSpace: 'pre-wrap'
+                        }}
+                      >
+                        {para === '' ? <br /> : renderStoryText(para, hColor, boxHighlight)}
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
           </div>
