@@ -16,6 +16,7 @@ import {
   X,
   Play,
   Pause,
+  Mic,
   Film,
   Loader2,
   MoveRight,
@@ -24,8 +25,7 @@ import {
   FileImage,
   Music,
   Volume2,
-  VolumeX,
-  Mic
+  VolumeX
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toPng, toCanvas } from 'html-to-image';
@@ -146,9 +146,14 @@ export default function App() {
   const [bulkExportInfo, setBulkExportInfo] = useState('');
 
   const cancelExportRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const handleCancelExport = useCallback(() => {
     cancelExportRef.current = true;
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
     setIsExporting(false);
     setExportProgress(0);
     setBulkExportInfo('');
@@ -171,56 +176,7 @@ export default function App() {
     return 'video/webm';
   }, []);
 
-  const getActiveHighlightIndex = (
-    text: string,
-    currentTime: number,
-    totalDuration: number,
-    highlightStyle: 'word-accumulate' | 'word-single' | 'sentence-single' | 'none'
-  ) => {
-    if (highlightStyle === 'none' || !text) return 0;
-    const cleanText = text.replace(/\[\[/g, '').replace(/\]\]/g, '').replace(/\[/g, '').replace(/\]/g, '');
-    const cleanParagraphs = cleanText.split('\n');
-    
-    if (highlightStyle === 'sentence-single') {
-      let totalSentences = 0;
-      cleanParagraphs.forEach(para => {
-        const sentenceParts = para.split(/([.!?]+(?:\s+|$))/).filter(s => s.length > 0);
-        const fullSentences: string[] = [];
-        for (let i = 0; i < sentenceParts.length; i++) {
-          if (i % 2 === 0) {
-            fullSentences.push(sentenceParts[i]);
-          } else if (fullSentences.length > 0) {
-            fullSentences[fullSentences.length - 1] += sentenceParts[i];
-          } else {
-            fullSentences.push(sentenceParts[i]);
-          }
-        }
-        totalSentences += fullSentences.length;
-      });
-      const progress = Math.max(0, Math.min(0.999, currentTime / (totalDuration || 1)));
-      return Math.floor(progress * (totalSentences || 1));
-    } else {
-      let totalWords = 0;
-      cleanParagraphs.forEach(para => {
-        const tokens = para.split(/(\s+)/).filter(t => t.length > 0);
-        const wordsOnly = tokens.filter(t => !/^\s+$/.test(t));
-        totalWords += wordsOnly.length;
-      });
-      const progress = Math.max(0, Math.min(0.999, currentTime / (totalDuration || 1)));
-      return Math.floor(progress * (totalWords || 1));
-    }
-  };
-
-  const recordCanvasToMp4 = async (
-    canvas: HTMLCanvasElement, 
-    duration: number, 
-    onProgress?: (p: number) => void, 
-    videoUrl?: string | null, 
-    overlayOpacity: number = 0, 
-    audioStartOffset = 0, 
-    node?: HTMLElement | null,
-    storyTextToSync?: string
-  ) => {
+  const recordCanvasToMp4 = async (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0) => {
     // Check for WebCodecs support
     if (!('VideoEncoder' in window) || !('VideoFrame' in window)) {
       throw new Error('WebCodecs API not supported');
@@ -234,7 +190,6 @@ export default function App() {
 
     const fps = 30;
     const totalFrames = duration * fps;
-    let lastCapturedCanvas: HTMLCanvasElement = canvas;
 
     // Create a recording canvas that we will draw into
     const offscreen = document.createElement('canvas');
@@ -275,10 +230,10 @@ export default function App() {
         width,
         height
       },
-      audio: (uploadedMusicBuffer || uploadedVoiceOverBuffer) ? {
+      audio: uploadedMusicBuffer ? {
         codec: 'aac',
-        numberOfChannels: 2,
-        sampleRate: 44100
+        numberOfChannels: uploadedMusicBuffer.numberOfChannels,
+        sampleRate: uploadedMusicBuffer.sampleRate
       } : undefined,
       fastStart: 'in-memory'
     });
@@ -342,8 +297,6 @@ export default function App() {
       encoder.configure(config);
     }
 
-    let lastActiveIndex: number | null = null;
-
     try {
       for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
         if (cancelExportRef.current) {
@@ -353,43 +306,6 @@ export default function App() {
         if (encoder.state === 'closed') throw new Error('Encoder closed unexpectedly');
 
         const timestamp = (frameIndex * 1000000) / fps;
-
-        // Dynamic frame capture for voice over highlights
-        const pageRelativeTime = frameIndex / fps;
-        const currentActiveIndex = (uploadedVoiceOverBuffer && voiceOverHighlightStyle !== 'none' && storyTextToSync)
-          ? getActiveHighlightIndex(storyTextToSync, pageRelativeTime, duration, voiceOverHighlightStyle)
-          : 0;
-
-        const isCaptureFrame = (frameIndex === 0) || 
-                              (frameIndex === totalFrames - 1) || 
-                              (uploadedVoiceOverBuffer && voiceOverHighlightStyle !== 'none' && currentActiveIndex !== lastActiveIndex);
-
-        if (node && isCaptureFrame) {
-          const currentTimeSec = audioStartOffset + (frameIndex / fps);
-          if (uploadedVoiceOverBuffer && voiceOverHighlightStyle !== 'none') {
-            setExportVoiceOverTime(currentTimeSec);
-            lastActiveIndex = currentActiveIndex;
-            // Short delay to ensure React finishes rendering highlight transitions before we take a snapshot
-            await bgDelay(16);
-          }
-          try {
-            const freshCanvas = await toCanvas(node, {
-              pixelRatio: 1,
-              cacheBust: true,
-              width: 1080,
-              height: 1920,
-              style: {
-                transform: 'none',
-                transformOrigin: 'top left',
-                width: '1080px',
-                height: '1920px'
-              }
-            });
-            lastCapturedCanvas = freshCanvas;
-          } catch (err) {
-            console.warn("Failed to capture dynamic frame canvas at timestamp:", currentTimeSec, err);
-          }
-        }
         
         // Clear canvas
         ctx.fillStyle = '#000';
@@ -398,7 +314,7 @@ export default function App() {
         // 1. Draw video background
         if (video) {
           // Sync video time
-          video.currentTime = (audioStartOffset + (frameIndex / fps)) % video.duration;
+          video.currentTime = (frameIndex / fps) % video.duration;
           
           await new Promise(r => {
             let done = false;
@@ -443,7 +359,7 @@ export default function App() {
         }
 
         // 2. Draw UI snapshot on top
-        ctx.drawImage(lastCapturedCanvas, 0, 0, width, height);
+        ctx.drawImage(canvas, 0, 0, width, height);
 
         // We create a new VideoFrame using the offscreen canvas. 
         const frame = new VideoFrame(offscreen, { 
@@ -476,10 +392,7 @@ export default function App() {
       // Encode audio if uploaded
       let audioEncoderError: Error | null = null;
       let audioEncoder: AudioEncoder | null = null;
-      
-      const hasAudio = uploadedMusicBuffer || uploadedVoiceOverBuffer;
-
-      if (hasAudio) {
+      if (uploadedMusicBuffer) {
         audioEncoder = new AudioEncoder({
           output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
           error: (e) => {
@@ -490,18 +403,15 @@ export default function App() {
 
         audioEncoder.configure({
           codec: 'mp4a.40.2',
-          numberOfChannels: 2,
-          sampleRate: 44100,
+          numberOfChannels: uploadedMusicBuffer.numberOfChannels,
+          sampleRate: uploadedMusicBuffer.sampleRate,
           bitrate: 128000
         });
 
-        const sampleRate = 44100;
-        const numberOfChannels = 2;
+        const sampleRate = uploadedMusicBuffer.sampleRate;
+        const numberOfChannels = uploadedMusicBuffer.numberOfChannels;
         const chunkFrames = 1024;
         const totalSamples = Math.floor(duration * sampleRate);
-
-        const musicVol = musicVolume / 100;
-        const voVol = voiceOverVolume / 100;
 
         for (let offset = 0; offset < totalSamples; offset += chunkFrames) {
           if (cancelExportRef.current) {
@@ -512,22 +422,10 @@ export default function App() {
           const chunkData = new Float32Array(currentChunkSize * numberOfChannels);
           
           for (let channel = 0; channel < numberOfChannels; channel++) {
-            const musicChannelData = uploadedMusicBuffer ? uploadedMusicBuffer.getChannelData(channel) : null;
-            const voChannelData = uploadedVoiceOverBuffer ? uploadedVoiceOverBuffer.getChannelData(channel) : null;
-            
+            const channelData = uploadedMusicBuffer.getChannelData(channel);
             for (let i = 0; i < currentChunkSize; i++) {
-              let sampleValue = 0;
-              if (musicChannelData) {
-                const sourceIndex = (offset + i) % musicChannelData.length;
-                sampleValue += musicChannelData[sourceIndex] * musicVol;
-              }
-              if (voChannelData) {
-                const sourceIndex = Math.floor(audioStartOffset * sampleRate) + offset + i;
-                if (sourceIndex < voChannelData.length) {
-                  sampleValue += voChannelData[sourceIndex] * voVol;
-                }
-              }
-              chunkData[channel * currentChunkSize + i] = Math.max(-1.0, Math.min(1.0, sampleValue));
+              const sourceIndex = (offset + i) % channelData.length;
+              chunkData[channel * currentChunkSize + i] = channelData[sourceIndex];
             }
           }
 
@@ -573,40 +471,21 @@ export default function App() {
     }
   };
 
-  const recordWithFallback = async (
-    canvas: HTMLCanvasElement, 
-    duration: number, 
-    onProgress?: (p: number) => void, 
-    videoUrl?: string | null, 
-    overlayOpacity: number = 0, 
-    audioStartOffset = 0, 
-    node?: HTMLElement | null,
-    storyTextToSync?: string
-  ) => {
+  const recordWithFallback = async (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0) => {
     if ('VideoEncoder' in window) {
       try {
-        return await recordCanvasToMp4(canvas, duration, onProgress, videoUrl, overlayOpacity, audioStartOffset, node, storyTextToSync);
+        return await recordCanvasToMp4(canvas, duration, onProgress, videoUrl, overlayOpacity);
       } catch (err) {
         console.error('VideoEncoder failed, falling back to MediaRecorder:', err);
       }
     }
-    return await recordCanvasMediaRecorder(canvas, duration, onProgress, videoUrl, overlayOpacity, audioStartOffset, node, storyTextToSync);
+    return await recordCanvasMediaRecorder(canvas, duration, onProgress, videoUrl, overlayOpacity);
   };
 
-  const recordCanvasMediaRecorder = (
-    canvas: HTMLCanvasElement, 
-    duration: number, 
-    onProgress?: (p: number) => void, 
-    videoUrl?: string | null, 
-    overlayOpacity: number = 0, 
-    audioStartOffset = 0, 
-    node?: HTMLElement | null,
-    storyTextToSync?: string
-  ): Promise<Blob> => {
+  const recordCanvasMediaRecorder = (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0): Promise<Blob> => {
     return new Promise(async (resolve, reject) => {
       const width = canvas.width;
       const height = canvas.height;
-      let lastCapturedCanvas: HTMLCanvasElement = canvas;
       const offscreen = document.createElement('canvas');
       offscreen.width = width;
       offscreen.height = height;
@@ -617,8 +496,6 @@ export default function App() {
 
       let video: HTMLVideoElement | null = null;
       let audio: HTMLAudioElement | null = null;
-      let voAudio: HTMLAudioElement | null = null;
-      let audioCtx: any = null;
 
       try {
         if (videoUrl) {
@@ -642,37 +519,15 @@ export default function App() {
 
         const stream = offscreen.captureStream(30);
 
-        if (uploadedMusicUrl || uploadedVoiceOverUrl) {
+        if (uploadedMusicUrl) {
+          audio = document.createElement('audio');
+          audio.src = uploadedMusicUrl;
+          audio.crossOrigin = 'anonymous';
+          audio.loop = true;
+          audio.volume = 1.0;
           try {
-            audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-            const dest = audioCtx.createMediaStreamDestination();
-
-            if (uploadedMusicUrl) {
-              audio = document.createElement('audio');
-              audio.src = uploadedMusicUrl;
-              audio.crossOrigin = 'anonymous';
-              audio.loop = true;
-              audio.volume = musicVolume / 100;
-              audio.play().catch(e => console.log('Autoplay blocked in media recorder:', e));
-              const musicNode = audioCtx.createMediaElementSource(audio);
-              musicNode.connect(dest);
-            }
-
-            if (uploadedVoiceOverUrl) {
-              voAudio = document.createElement('audio');
-              voAudio.src = uploadedVoiceOverUrl;
-              voAudio.crossOrigin = 'anonymous';
-              voAudio.loop = false; // Do not loop voice over in precise sub-segments
-              voAudio.volume = voiceOverVolume / 100;
-              if (audioStartOffset > 0) {
-                voAudio.currentTime = audioStartOffset;
-              }
-              voAudio.play().catch(e => console.log('Autoplay blocked in media recorder voice over:', e));
-              const voiceNode = audioCtx.createMediaElementSource(voAudio);
-              voiceNode.connect(dest);
-            }
-
-            const audioStream = dest.stream;
+            audio.play().catch(e => console.log('Autoplay blocked in media recorder:', e));
+            const audioStream = (audio as any).captureStream ? (audio as any).captureStream() : (audio as any).mozCaptureStream ? (audio as any).mozCaptureStream() : null;
             if (audioStream) {
               const audioTrack = audioStream.getAudioTracks()[0];
               if (audioTrack) {
@@ -680,7 +535,7 @@ export default function App() {
               }
             }
           } catch (e) {
-            console.error("Failed to attach mixed audio track to media recorder fallback:", e);
+            console.error("Failed to attach audio track to media recorder fallback:", e);
           }
         }
 
@@ -702,15 +557,6 @@ export default function App() {
               audio.remove();
               audio = null;
             }
-            if (voAudio) {
-              voAudio.pause();
-              voAudio.remove();
-              voAudio = null;
-            }
-            if (audioCtx) {
-              audioCtx.close();
-              audioCtx = null;
-            }
             resolveStop(new Blob(chunks, { type: mimeType }));
           };
         });
@@ -719,8 +565,6 @@ export default function App() {
         
         const fps = 30;
         const totalFrames = duration * fps;
-        
-        let lastActiveIndex: number | null = null;
         
         for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
           if (cancelExportRef.current) {
@@ -731,50 +575,12 @@ export default function App() {
             } catch (e) {}
             throw new Error('Export cancelled');
           }
-
-          // Dynamic frame capture for voice over highlights inside media recorder fallback
-          const pageRelativeTime = frameIndex / fps;
-          const currentActiveIndex = (uploadedVoiceOverBuffer && voiceOverHighlightStyle !== 'none' && storyTextToSync)
-            ? getActiveHighlightIndex(storyTextToSync, pageRelativeTime, duration, voiceOverHighlightStyle)
-            : 0;
-
-          const isCaptureFrame = (frameIndex === 0) || 
-                                (frameIndex === totalFrames - 1) || 
-                                (uploadedVoiceOverBuffer && voiceOverHighlightStyle !== 'none' && currentActiveIndex !== lastActiveIndex);
-
-          if (node && isCaptureFrame) {
-            const currentTimeSec = audioStartOffset + (frameIndex / fps);
-            if (uploadedVoiceOverBuffer && voiceOverHighlightStyle !== 'none') {
-              setExportVoiceOverTime(currentTimeSec);
-              lastActiveIndex = currentActiveIndex;
-              // Short delay to ensure React finishes rendering highlight transitions before we take a snapshot
-              await bgDelay(16);
-            }
-            try {
-              const freshCanvas = await toCanvas(node, {
-                pixelRatio: 1,
-                cacheBust: true,
-                width: 1080,
-                height: 1920,
-                style: {
-                  transform: 'none',
-                  transformOrigin: 'top left',
-                  width: '1080px',
-                  height: '1920px'
-                }
-              });
-              lastCapturedCanvas = freshCanvas;
-            } catch (err) {
-              console.warn("Failed to capture dynamic frame canvas in media recorder fallback at timestamp:", currentTimeSec, err);
-            }
-          }
-
           // Clear and Draw
           ctx.fillStyle = '#000';
           ctx.fillRect(0, 0, width, height);
 
           if (video) {
-            video.currentTime = (audioStartOffset + (frameIndex / fps)) % video.duration;
+            video.currentTime = (frameIndex / fps) % video.duration;
             await new Promise(r => {
               let done = false;
               const onSeeked = () => {
@@ -815,7 +621,7 @@ export default function App() {
             }
           }
 
-          ctx.drawImage(lastCapturedCanvas, 0, 0, width, height);
+          ctx.drawImage(canvas, 0, 0, width, height);
           
           if (onProgress) onProgress(Math.floor((frameIndex / totalFrames) * 100));
           
@@ -840,17 +646,6 @@ export default function App() {
           audio.pause();
           audio.remove();
           audio = null;
-        }
-        if (voAudio) {
-          voAudio.pause();
-          voAudio.remove();
-          voAudio = null;
-        }
-        if (audioCtx) {
-          try {
-            audioCtx.close();
-          } catch (e) {}
-          audioCtx = null;
         }
       }
     });
@@ -1046,30 +841,28 @@ export default function App() {
   const musicFileInputRef = useRef<HTMLInputElement>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
 
-  // Voice Over State
-  const [uploadedVoiceOverFile, setUploadedVoiceOverFile] = useState<File | null>(null);
-  const [uploadedVoiceOverUrl, setUploadedVoiceOverUrl] = useState<string | null>(null);
-  const [uploadedVoiceOverBuffer, setUploadedVoiceOverBuffer] = useState<AudioBuffer | null>(null);
-  const [isVoiceOverMuted, setIsVoiceOverMuted] = useState<boolean>(false);
-  const [isVoiceOverDecoding, setIsVoiceOverDecoding] = useState<boolean>(false);
-  const [voiceOverHighlightStyle, setVoiceOverHighlightStyle] = useState<'word-accumulate' | 'word-single' | 'sentence-single' | 'none'>('word-accumulate');
+  // Voice-Over State
+  const [voiceOverFile, setVoiceOverFile] = useState<File | null>(null);
+  const [voiceOverUrl, setVoiceOverUrl] = useState<string | null>(null);
+  const [voiceOverDuration, setVoiceOverDuration] = useState<number>(0);
   const [voiceOverPlaybackTime, setVoiceOverPlaybackTime] = useState<number>(0);
-  const [exportVoiceOverTime, setExportVoiceOverTime] = useState<number | null>(null);
-  const [musicVolume, setMusicVolume] = useState<number>(50); // percentage 0-100
-  const [voiceOverVolume, setVoiceOverVolume] = useState<number>(100); // percentage 0-100
-  const [isVoiceOverPlaying, setIsVoiceOverPlaying] = useState<boolean>(false);
-  const [syncHighlightColor, setSyncHighlightColor] = useState<string>('#f59e0b');
-
-  const formatTime = (seconds: number) => {
-    if (isNaN(seconds) || seconds === null || seconds === undefined) return "0:00";
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  // Voice Over Refs
+  const [isPlayingVoiceOver, setIsPlayingVoiceOver] = useState<boolean>(false);
+  const [voiceOverHighlightColor, setVoiceOverHighlightColor] = useState<string>('#facc15');
+  const [voiceOverHighlightMode, setVoiceOverHighlightMode] = useState<'text' | 'bg'>('bg');
+  const [sentenceTimings, setSentenceTimings] = useState<any[]>([]);
+  const [activeSentenceIndex, setActiveSentenceIndex] = useState<number | null>(null);
   const voiceOverFileInputRef = useRef<HTMLInputElement>(null);
-  const voiceOverElementRef = useRef<HTMLAudioElement | null>(null);
+  const voiceOverAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const splitIntoSentences = (text: string): string[] => {
+    if (!text) return [];
+    const rawSentences = text
+      .split(/(?<=[.!?])\s+/)
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+    if (rawSentences.length === 0) return [text];
+    return rawSentences;
+  };
 
   // Footer State
   const [showFooter, setShowFooter] = useState(true);
@@ -1087,7 +880,6 @@ export default function App() {
 
   useEffect(() => {
     if (audioElementRef.current) {
-      audioElementRef.current.volume = musicVolume / 100;
       if (uploadedMusicUrl && !isMusicMuted && !isExporting) {
         audioElementRef.current.play().catch(err => {
           console.log('Autoplay blocked. Pressing play after click will work.', err);
@@ -1096,61 +888,114 @@ export default function App() {
         audioElementRef.current.pause();
       }
     }
-  }, [uploadedMusicUrl, isMusicMuted, isExporting, musicVolume]);
+  }, [uploadedMusicUrl, isMusicMuted, isExporting]);
 
-  useEffect(() => {
-    if (voiceOverElementRef.current) {
-      voiceOverElementRef.current.volume = voiceOverVolume / 100;
-      if (uploadedVoiceOverUrl && !isVoiceOverMuted && !isExporting) {
-        voiceOverElementRef.current.play()
-          .then(() => setIsVoiceOverPlaying(true))
-          .catch(err => {
-            console.log('Autoplay blocked. Pressing play after click will work.', err);
-            setIsVoiceOverPlaying(false);
-          });
-      } else {
-        voiceOverElementRef.current.pause();
-        setIsVoiceOverPlaying(false);
-      }
+  const handleVoiceOverUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setVoiceOverFile(file);
+      const url = URL.createObjectURL(file);
+      setVoiceOverUrl(url);
     }
-  }, [uploadedVoiceOverUrl, isVoiceOverMuted, isExporting, voiceOverVolume]);
+  };
 
+  const toggleVoiceOverPlay = () => {
+    if (!voiceOverAudioRef.current) return;
+    if (isPlayingVoiceOver) {
+      voiceOverAudioRef.current.pause();
+      setIsPlayingVoiceOver(false);
+    } else {
+      voiceOverAudioRef.current.play().catch(err => {
+        console.error('Failed to play voice-over audio:', err);
+      });
+      setIsPlayingVoiceOver(true);
+    }
+  };
+
+  // Voice-Over synchronization and automatic timings calculation effect
   useEffect(() => {
-    const voEl = voiceOverElementRef.current;
-    if (!voEl) return;
+    if (voiceOverUrl) {
+      const audio = voiceOverAudioRef.current || new Audio(voiceOverUrl);
+      voiceOverAudioRef.current = audio;
+      audio.src = voiceOverUrl;
+      
+      const handleLoadedMetadata = () => {
+        const dur = audio.duration;
+        setVoiceOverDuration(dur);
+        // Auto-set the export duration of the visual story to match the voice-over precisely!
+        setExportDuration(Math.ceil(dur));
+        
+        // Split and distribute timings
+        const sentences = splitIntoSentences(storyText);
+        const totalChars = sentences.reduce((acc, s) => acc + s.length, 0);
+        let elapsed = 0;
+        const newTimings = sentences.map((sent, index) => {
+          const segDur = totalChars > 0 ? (sent.length / totalChars) * dur : dur / sentences.length;
+          const start = elapsed;
+          const end = elapsed + segDur;
+          elapsed = end;
+          return { index, text: sent, start: Number(start.toFixed(2)), end: Number(end.toFixed(2)) };
+        });
+        setSentenceTimings(newTimings);
+      };
+      
+      const handleTimeUpdate = () => {
+        const curr = audio.currentTime;
+        setVoiceOverPlaybackTime(curr);
+        
+        if (sentenceTimings && sentenceTimings.length > 0) {
+          const activeSeg = sentenceTimings.find(s => curr >= s.start && curr <= s.end);
+          if (activeSeg) {
+            setActiveSentenceIndex(activeSeg.index);
+          } else {
+            setActiveSentenceIndex(null);
+          }
+        }
+      };
+      
+      const handleEnded = () => {
+         setIsPlayingVoiceOver(false);
+         setActiveSentenceIndex(null);
+      };
+      
+      audio.addEventListener('loadedmetadata', handleLoadedMetadata);
+      audio.addEventListener('timeupdate', handleTimeUpdate);
+      audio.addEventListener('ended', handleEnded);
+      
+      if (audio.readyState >= 1) {
+        handleLoadedMetadata();
+      }
+      
+      return () => {
+        audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+        audio.removeEventListener('timeupdate', handleTimeUpdate);
+        audio.removeEventListener('ended', handleEnded);
+        audio.pause();
+      };
+    } else {
+      setVoiceOverDuration(0);
+      setSentenceTimings([]);
+      setActiveSentenceIndex(null);
+      setIsPlayingVoiceOver(false);
+    }
+  }, [voiceOverUrl]);
 
-    const handleTimeUpdate = () => {
-      setVoiceOverPlaybackTime(voEl.currentTime);
-    };
-
-    const handleEnded = () => {
-      setVoiceOverPlaybackTime(0);
-      setIsVoiceOverPlaying(false);
-    };
-
-    const handlePlayState = () => {
-      setIsVoiceOverPlaying(true);
-    };
-
-    const handlePauseState = () => {
-      setIsVoiceOverPlaying(false);
-    };
-
-    voEl.addEventListener('timeupdate', handleTimeUpdate);
-    voEl.addEventListener('ended', handleEnded);
-    voEl.addEventListener('pause', handlePauseState);
-    voEl.addEventListener('play', handlePlayState);
-
-    // Initial check just in case it is already loaded/playing
-    setIsVoiceOverPlaying(!voEl.paused);
-
-    return () => {
-      voEl.removeEventListener('timeupdate', handleTimeUpdate);
-      voEl.removeEventListener('ended', handleEnded);
-      voEl.removeEventListener('pause', handlePauseState);
-      voEl.removeEventListener('play', handlePlayState);
-    };
-  }, [uploadedVoiceOverUrl]);
+  // Recalculate timings if storyText edits while voiceOver has a duration
+  useEffect(() => {
+    if (voiceOverUrl && voiceOverDuration > 0) {
+      const sentences = splitIntoSentences(storyText);
+      const totalChars = sentences.reduce((acc, s) => acc + s.length, 0);
+      let elapsed = 0;
+      const newTimings = sentences.map((sent, index) => {
+        const segDur = totalChars > 0 ? (sent.length / totalChars) * voiceOverDuration : voiceOverDuration / sentences.length;
+        const start = elapsed;
+        const end = elapsed + segDur;
+        elapsed = end;
+        return { index, text: sent, start: Number(start.toFixed(2)), end: Number(end.toFixed(2)) };
+      });
+      setSentenceTimings(newTimings);
+    }
+  }, [storyText, voiceOverDuration]);
 
   const bgFileInputRef = useRef<HTMLInputElement>(null);
   const videoBgInputRef = useRef<HTMLInputElement>(null);
@@ -1230,13 +1075,6 @@ export default function App() {
     setVideoBackground(null);
     setPreviousBgStyle(null);
     setRemovePaddingWhenHidden(false);
-    setUploadedVoiceOverFile(null);
-    setUploadedVoiceOverUrl(null);
-    setUploadedVoiceOverBuffer(null);
-    setIsVoiceOverMuted(false);
-    setIsVoiceOverDecoding(false);
-    setMusicVolume(50);
-    setVoiceOverVolume(100);
   };
 
   const handleNewPoster = () => {
@@ -1359,29 +1197,6 @@ export default function App() {
     }
   };
 
-  const resampleAudioBuffer = async (audioBuffer: AudioBuffer, targetSampleRate = 44100, targetChannels = 2): Promise<AudioBuffer> => {
-    if (audioBuffer.sampleRate === targetSampleRate && audioBuffer.numberOfChannels === targetChannels) {
-      return audioBuffer;
-    }
-    try {
-      const offlineCtx = new (window.OfflineAudioContext || (window as any).webkitOfflineAudioContext)(
-        targetChannels,
-        Math.ceil(audioBuffer.duration * targetSampleRate),
-        targetSampleRate
-      );
-      
-      const source = offlineCtx.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(offlineCtx.destination);
-      source.start();
-      
-      return await offlineCtx.startRendering();
-    } catch (e) {
-      console.error("Resampling failed, returning original audio buffer", e);
-      return audioBuffer;
-    }
-  };
-
   const handleMusicUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -1395,38 +1210,11 @@ export default function App() {
         const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
         const arrayBuffer = await file.arrayBuffer();
         const decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-        const resampled = await resampleAudioBuffer(decodedBuffer);
-        setUploadedMusicBuffer(resampled);
+        setUploadedMusicBuffer(decodedBuffer);
       } catch (err) {
         console.error("Failed to decode uploaded background music audio:", err);
       } finally {
         setIsMusicDecoding(false);
-      }
-    }
-  };
-
-  const handleVoiceOverUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setUploadedVoiceOverFile(file);
-      setIsVoiceOverDecoding(true);
-      const url = URL.createObjectURL(file);
-      setUploadedVoiceOverUrl(url);
-      
-      try {
-        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const arrayBuffer = await file.arrayBuffer();
-        const decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-        const resampled = await resampleAudioBuffer(decodedBuffer);
-        setUploadedVoiceOverBuffer(resampled);
-        // Automatically adjust the duration of the exported video based on the uploaded voice-over duration.
-        if (decodedBuffer.duration) {
-          setExportDuration(Math.ceil(decodedBuffer.duration));
-        }
-      } catch (err) {
-        console.error("Failed to decode uploaded voice over audio:", err);
-      } finally {
-        setIsVoiceOverDecoding(false);
       }
     }
   };
@@ -1529,38 +1317,6 @@ export default function App() {
     e.target.value = '';
   };
 
-  const getPageAlignedTimes = useCallback(() => {
-    const activePages = activeTab === 'pictext'
-      ? picTextBulkStories
-      : bulkStories.filter(s => s.text.trim().length > 0);
-
-    const useVoiceOver = !!uploadedVoiceOverBuffer;
-    const totalVODuration = uploadedVoiceOverBuffer ? uploadedVoiceOverBuffer.duration : exportDuration;
-
-    const pageTexts = activePages.map(page => page.text || '');
-    const pageTextLengths = pageTexts.map(text => {
-      const len = text.trim().length;
-      return len > 0 ? len : 10;
-    });
-    const totalTextLength = pageTextLengths.reduce((sum, len) => sum + len, 0);
-
-    const pageDurations = activePages.map((_, idx) => {
-      if (useVoiceOver) {
-        return totalTextLength > 0 ? totalVODuration * (pageTextLengths[idx] / totalTextLength) : totalVODuration / activePages.length;
-      }
-      return exportDuration;
-    });
-
-    let currentOffset = 0;
-    const pageOffsets = pageDurations.map(dur => {
-      const offset = currentOffset;
-      currentOffset += dur;
-      return offset;
-    });
-
-    return { pageDurations, pageOffsets };
-  }, [activeTab, picTextBulkStories, bulkStories, uploadedVoiceOverBuffer, exportDuration]);
-
   const handleBulkDownload = useCallback(async () => {
     const cardElements = document.querySelectorAll('.bulk-poster-card');
     if (cardElements.length === 0) return;
@@ -1570,11 +1326,6 @@ export default function App() {
     setExportProgress(0);
     setBulkExportInfo(`Initializing bulk export...`);
     
-    const { pageDurations, pageOffsets } = getPageAlignedTimes();
-    const activePages = activeTab === 'pictext'
-      ? picTextBulkStories
-      : bulkStories.filter(s => s.text.trim().length > 0);
-
     // Dynamically import jszip inside the handler to keep the initial bundle smaller
     const JSZip = (await import('jszip')).default;
     const zip = new JSZip();
@@ -1588,49 +1339,110 @@ export default function App() {
       for (let i = 0; i < total; i++) {
         if (cancelExportRef.current) throw new Error('Export cancelled');
         const node = cardElements[i] as HTMLElement;
-        setBulkExportInfo(`Exporting Card ${i + 1} of ${total}`);
+        setBulkExportInfo(`Rendering Card ${i + 1} of ${total}`);
         
-        const pageDurationVal = pageDurations[i] || exportDuration;
-        const pageOffsetVal = pageOffsets[i] || 0;
-        const originalStoryText = activePages[i]?.text || '';
-
-        const blob = await new Promise<Blob>((resolve, reject) => {
-          toCanvas(node, {
-            pixelRatio: 1,
-            cacheBust: true,
-            width: 1080,
-            height: 1920,
-            style: {
-              transform: 'none',
-              transformOrigin: 'top left',
-              width: '1080px',
-              height: '1920px'
-            }
-          }).then(async (canvas) => {
-            try {
-              if (cancelExportRef.current) {
-                reject(new Error('Export cancelled'));
-                return;
-              }
-              const videoBlob = await recordWithFallback(canvas, pageDurationVal, (cardProgress) => {
-                if (cancelExportRef.current) {
-                  reject(new Error('Export cancelled'));
-                  return;
-                }
-                const overallProgress = Math.floor(((i + (cardProgress / 100)) / total) * 100);
-                setExportProgress(overallProgress);
-              }, videoBackground, bgImageOverlay, pageOffsetVal, node, originalStoryText);
-              resolve(videoBlob);
-            } catch (err) {
-              console.error('Bulk export error:', err);
-              reject(err);
-            }
-          }).catch(reject);
+        const dataUrl = await toPng(node, {
+          cacheBust: true,
+          pixelRatio: 1,
+          width: 1080,
+          height: 1920,
+          style: {
+            transform: 'none',
+            transformOrigin: 'top left',
+            width: '1080px',
+            height: '1920px'
+          }
         });
 
         if (cancelExportRef.current) throw new Error('Export cancelled');
-        const extension = blob.type.includes('mp4') ? 'mp4' : 'webm';
-        zip.file(`story-${i + 1}.${extension}`, blob);
+
+        const formData = new FormData();
+        const imageBlob = await fetch(dataUrl).then((r) => r.blob());
+        const imgFile = new File([imageBlob], `overlay-${i + 1}.png`, { type: 'image/png' });
+        formData.append('image', imgFile);
+
+        if (videoBackground) {
+          try {
+            const videoBlob = await fetch(videoBackground).then((r) => r.blob());
+            const videoFile = new File([videoBlob], 'background.mp4', { type: videoBlob.type || 'video/mp4' });
+            formData.append('video', videoFile);
+          } catch (err) {
+            console.error('Failed to prepare background video for server upload:', err);
+          }
+        }
+
+        if (uploadedMusicFile) {
+          formData.append('audio', uploadedMusicFile);
+        }
+
+        formData.append('duration', exportDuration.toString());
+
+        const controller = new AbortController();
+        abortControllerRef.current = controller;
+
+        const response = await fetch('/api/render', {
+          method: 'POST',
+          body: formData,
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Server execution failure (HTTP ${response.status})`);
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('ReadableStream processing not supported by your browser.');
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let finalDownloadUrl = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (cancelExportRef.current) {
+            controller.abort();
+            throw new Error('Export cancelled');
+          }
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const data = JSON.parse(line);
+              if (data.status === 'rendering') {
+                const cardProgress = data.progress;
+                const overallProgress = Math.floor(((i + (cardProgress / 100)) / total) * 100);
+                setExportProgress(overallProgress);
+              } else if (data.status === 'completed') {
+                finalDownloadUrl = data.downloadUrl;
+              } else if (data.status === 'error') {
+                throw new Error(data.error || 'Server rendering process returned an error');
+              }
+            } catch (e: any) {
+              if (e instanceof Error && e.message.includes('Server rendering')) {
+                throw e;
+              }
+              console.warn('Chunk parsing minor warning:', e);
+            }
+          }
+        }
+
+        if (!finalDownloadUrl) {
+          throw new Error('Render completed but no download url was returned by server');
+        }
+
+        const fileResponse = await fetch(finalDownloadUrl, { signal: controller.signal });
+        if (!fileResponse.ok) {
+          throw new Error(`Failed to fetch rendered video from ${finalDownloadUrl}`);
+        }
+        const videoBlob = await fileResponse.blob();
+        zip.file(`story-${i + 1}.mp4`, videoBlob);
+        
+        // Update progress of completed card
+        setExportProgress(Math.floor(((i + 1) / total) * 100));
       }
       
       if (cancelExportRef.current) throw new Error('Export cancelled');
@@ -1647,16 +1459,19 @@ export default function App() {
       setBulkExportInfo('');
       setIsExportModalOpen(false);
     } catch (err: any) {
-      if (err instanceof Error && err.message === 'Export cancelled') {
+      if (err instanceof Error && (err.name === 'AbortError' || err.message === 'Export cancelled')) {
         console.log('Bulk export cancelled by user');
       } else {
-        console.error('Bulk export failed', err);
+        console.error('Bulk export failed:', err);
+        alert('Bulk video rendering failed on the server. Please check that parameters are correct.');
       }
       setIsExporting(false);
       setExportProgress(0);
       setBulkExportInfo('');
+    } finally {
+      abortControllerRef.current = null;
     }
-  }, [exportDuration, activeTab, picTextBulkStories, bulkStories, uploadedVoiceOverBuffer, videoBackground, bgImageOverlay]);
+  }, [exportDuration, videoBackground, bgImageOverlay, uploadedMusicFile]);
 
   const handleBulkImageDownload = useCallback(async () => {
     const cardElements = document.querySelectorAll('.bulk-poster-card');
@@ -1773,70 +1588,195 @@ export default function App() {
         });
       }, 500);
     } else {
-      // Video Export (H.264 MP4 with proper metadata)
+      // Server-Side Video Export (FFmpeg on the Server)
       setExportProgress(0);
+      setBulkExportInfo('Initializing...');
       
-      setTimeout(() => {
+      setTimeout(async () => {
         if (cancelExportRef.current) return;
-        toCanvas(node, { 
-        pixelRatio: 1,
-        cacheBust: true,
-        width: 1080,
-        height: 1920,
-        style: {
-          transform: 'none',
-          transformOrigin: 'top left',
-          width: '1080px',
-          height: '1920px'
-        }
-      })
-        .then(async (canvas) => {
-          try {
-            if (cancelExportRef.current) {
-              throw new Error('Export cancelled');
-            }
-            const blob = await recordWithFallback(canvas, exportDuration, (p) => {
-              if (cancelExportRef.current) return;
-              setExportProgress(p);
-            }, videoBackground, bgImageOverlay, 0, node, storyText);
+        
+        try {
+          const formData = new FormData();
+          
+          if (voiceOverFile && sentenceTimings && sentenceTimings.length > 0) {
+            setBulkExportInfo('Rendering voice-over timed offsets...');
             
-            if (cancelExportRef.current) {
-              throw new Error('Export cancelled');
+            // Highlight frame overlays sequentially
+            const imageBlobs: { blob: Blob; index: number }[] = [];
+            
+            // Pause any active audio preview playbacks first
+            if (voiceOverAudioRef.current) {
+              voiceOverAudioRef.current.pause();
+              setIsPlayingVoiceOver(false);
             }
 
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            const extension = blob.type.includes('mp4') ? 'mp4' : 'webm';
-            link.href = url;
-            link.download = `story-video-${Date.now()}.${extension}`;
-            link.click();
-            
-            setExportProgress(0);
-            setIsExporting(false);
-            setIsExportModalOpen(false);
-          } catch (err: any) {
-            if (err instanceof Error && err.message === 'Export cancelled') {
-              console.log('Video export cancelled by user');
-            } else {
-              console.error('Video export failed', err);
-              alert('Video export failed. Your browser might not support high-quality export or the canvas is too large.');
+            // Stagger frame snapshotting to allow render synchronization
+            for (let i = 0; i < sentenceTimings.length; i++) {
+              if (cancelExportRef.current) throw new Error('Export cancelled');
+              
+              setBulkExportInfo(`Capturing sentence frame ${i + 1} of ${sentenceTimings.length}`);
+              setActiveSentenceIndex(i);
+              
+              await new Promise((resolve) => setTimeout(resolve, 300));
+              
+              const imgDataUrl = await toPng(node, {
+                cacheBust: true,
+                pixelRatio: 1,
+                width: 1080,
+                height: 1920,
+                style: {
+                  transform: 'none',
+                  transformOrigin: 'top left',
+                  width: '1080px',
+                  height: '1920px'
+                }
+              });
+              
+              const imageBlob = await fetch(imgDataUrl).then((r) => r.blob());
+              imageBlobs.push({ blob: imageBlob, index: i });
             }
-            setIsExporting(false);
-            setExportProgress(0);
-          }
-        })
-        .catch((err: any) => {
-          if (err instanceof Error && err.message === 'Export cancelled') {
-            console.log('Video export cancelled');
+            
+            // Clean active selection index back to default user preview
+            setActiveSentenceIndex(null);
+            
+            // Attach overlays
+            imageBlobs.forEach((item) => {
+              formData.append(`image_${item.index}`, item.blob, `frame-${item.index}.png`);
+            });
+            
+            // Attach timing offsets list
+            const timingsStr = JSON.stringify(sentenceTimings.map(t => ({
+              start: t.start,
+              end: t.end,
+              index: t.index
+            })));
+            formData.append('timings', timingsStr);
+            
+            // Attach voice-over audio
+            formData.append('voiceover', voiceOverFile);
           } else {
-            console.error('Video export failed', err);
+            // Standard single snapshot mode
+            setBulkExportInfo('Processing single video background overlay...');
+            const dataUrl = await toPng(node, { 
+              cacheBust: true,
+              pixelRatio: 1,
+              width: 1080,
+              height: 1920,
+              style: {
+                transform: 'none',
+                transformOrigin: 'top left',
+                width: '1080px',
+                height: '1920px'
+              }
+            });
+            
+            if (cancelExportRef.current) throw new Error('Export cancelled');
+
+            const imageBlob = await fetch(dataUrl).then((r) => r.blob());
+            const imgFile = new File([imageBlob], 'overlay.png', { type: 'image/png' });
+            formData.append('image', imgFile);
+          }
+
+          if (videoBackground) {
+            try {
+              const videoBlob = await fetch(videoBackground).then((r) => r.blob());
+              const videoFile = new File([videoBlob], 'background.mp4', { type: videoBlob.type || 'video/mp4' });
+              formData.append('video', videoFile);
+            } catch (err) {
+              console.error('Failed to prepare background video for server upload:', err);
+            }
+          }
+
+          if (uploadedMusicFile) {
+            formData.append('audio', uploadedMusicFile);
+          }
+
+          formData.append('duration', exportDuration.toString());
+
+          const controller = new AbortController();
+          abortControllerRef.current = controller;
+
+          setBulkExportInfo('Uploading to rendering engine...');
+          const response = await fetch('/api/render', {
+            method: 'POST',
+            body: formData,
+            signal: controller.signal,
+          });
+
+          if (!response.ok) {
+            throw new Error(`Server execution failure (HTTP ${response.status})`);
+          }
+
+          const reader = response.body?.getReader();
+          if (!reader) throw new Error('ReadableStream processing not supported by your browser.');
+
+          const decoder = new TextDecoder();
+          let buffer = '';
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (cancelExportRef.current) {
+              controller.abort();
+              throw new Error('Export cancelled');
+            }
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              try {
+                const data = JSON.parse(line);
+                if (data.status === 'rendering') {
+                  setBulkExportInfo(`Processing video: ${Math.round(data.progress)}%`);
+                  setExportProgress(data.progress);
+                } else if (data.status === 'completed') {
+                  setExportProgress(100);
+                  setBulkExportInfo('Completed!');
+                  
+                  const downloadUrl = data.downloadUrl;
+                  const link = document.createElement('a');
+                  link.href = downloadUrl;
+                  link.download = downloadUrl.split('/').pop() || 'story-render.mp4';
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+
+                  setTimeout(() => {
+                    setIsExporting(false);
+                    setIsExportModalOpen(false);
+                    setExportProgress(0);
+                    setBulkExportInfo('');
+                  }, 800);
+                  return;
+                } else if (data.status === 'error') {
+                  throw new Error(data.error || 'Server rendering process returned an error');
+                }
+              } catch (e: any) {
+                if (e instanceof Error && e.message.includes('Server rendering')) {
+                  throw e;
+                }
+                console.warn('Chunk parsing minor warning:', e);
+              }
+            }
+          }
+        } catch (err: any) {
+          if (err instanceof Error && err.name === 'AbortError' || err?.message === 'Export cancelled') {
+            console.log('Server-side video export cancelled.');
+          } else {
+            console.error('Server-side video export failed:', err);
+            alert('Video rendering failed on the server. Please check that FFmpeg is supported and all parameters are correct.');
           }
           setIsExporting(false);
           setExportProgress(0);
-        });
+          setBulkExportInfo('');
+        } finally {
+          abortControllerRef.current = null;
+        }
       }, 500);
     }
-  }, [previewRef, exportDuration, videoBackground, bgImageOverlay]);
+  }, [previewRef, exportDuration, videoBackground, bgImageOverlay, uploadedMusicFile]);
   
   const handleRandomHighlight = (index?: number) => {
     if (activeTab === 'pictext' && isPicTextBulk && typeof index === 'number') {
@@ -2019,174 +1959,6 @@ export default function App() {
     });
   };
 
-  const renderSyncedText = (
-    text: string, 
-    hColor: string, 
-    currentTime: number | null | undefined, 
-    totalDuration: number, 
-    highlightStyle: 'word-accumulate' | 'word-single' | 'sentence-single' | 'none',
-    useBox?: boolean,
-    boldParagraphIndex: number | null = null
-  ) => {
-    const hasVOTime = currentTime !== null && currentTime !== undefined && highlightStyle !== 'none';
-    
-    if (!hasVOTime) {
-      return text.split('\n').map((para, index) => {
-        const isBold = index === boldParagraphIndex;
-        return (
-          <div 
-            key={index}
-            style={{
-              fontWeight: isBold ? '800' : undefined,
-              whiteSpace: 'pre-wrap'
-            }}
-          >
-            {para === '' ? <br /> : renderStoryText(para, hColor, useBox)}
-          </div>
-        );
-      });
-    }
-
-    const activeColor = syncHighlightColor || hColor || '#f59e0b';
-
-    // Clean text by removing any bracket highlighting [text] or [[text]]
-    const cleanText = text.replace(/\[\[/g, '').replace(/\]\]/g, '').replace(/\[/g, '').replace(/\]/g, '');
-    const cleanParagraphs = cleanText.split('\n');
-    const isBoxStyle = useBox !== undefined ? useBox : boxHighlight;
-
-    if (highlightStyle === 'sentence-single') {
-      let totalSentences = 0;
-      const paragraphsWithSentences = cleanParagraphs.map(para => {
-        const sentenceParts = para.split(/([.!?]+(?:\s+|$))/).filter(s => s.length > 0);
-        const fullSentences: string[] = [];
-        for (let i = 0; i < sentenceParts.length; i++) {
-          if (i % 2 === 0) {
-            fullSentences.push(sentenceParts[i]);
-          } else if (fullSentences.length > 0) {
-            fullSentences[fullSentences.length - 1] += sentenceParts[i];
-          } else {
-            fullSentences.push(sentenceParts[i]);
-          }
-        }
-        totalSentences += fullSentences.length;
-        return fullSentences;
-      });
-
-      const progress = Math.max(0, Math.min(0.999, (currentTime || 0) / (totalDuration || 1)));
-      const activeSentenceIndex = Math.floor(progress * totalSentences);
-
-      let globalSentenceIdx = 0;
-      return paragraphsWithSentences.map((sentences, paraIdx) => {
-        const isBold = paraIdx === boldParagraphIndex;
-        return (
-          <div 
-            key={`p-${paraIdx}`} 
-            style={{ fontWeight: isBold ? '800' : undefined, whiteSpace: 'pre-wrap' }} 
-            className="mb-3"
-          >
-            {sentences.length === 0 ? <br /> : sentences.map((sentence, sentIdx) => {
-              const currentIdx = globalSentenceIdx;
-              globalSentenceIdx++;
-              const isActive = currentIdx === activeSentenceIndex;
-
-              if (isActive) {
-                if (isBoxStyle) {
-                  return (
-                    <span 
-                      key={`sent-${sentIdx}`}
-                      style={{ backgroundColor: activeColor, color: '#ffffff' }}
-                      className="px-2 py-0.5 rounded-lg mx-1 inline font-extrabold shadow-sm text-white transition-all scale-[1.01]"
-                    >
-                      {sentence}
-                    </span>
-                  );
-                } else {
-                  return (
-                    <span 
-                      key={`sent-${sentIdx}`}
-                      style={{ color: activeColor }}
-                      className={cn("font-extrabold transition-all scale-[1.01]", highlightUnderline ? "underline decoration-2 underline-offset-4" : "")}
-                    >
-                      {sentence}
-                    </span>
-                  );
-                }
-              }
-              return <span key={`sent-${sentIdx}`}>{sentence}</span>;
-            })}
-          </div>
-        );
-      });
-    }
-
-    // Word highlighting (either word-accumulate or word-single)
-    let totalWords = 0;
-    const paragraphsWithTokens = cleanParagraphs.map(para => {
-      const tokens = para.split(/(\s+)/).filter(t => t.length > 0);
-      const wordsOnly = tokens.filter(t => !/^\s+$/.test(t));
-      totalWords += wordsOnly.length;
-      return { tokens, wordsOnlyCount: wordsOnly.length };
-    });
-
-    const progress = Math.max(0, Math.min(0.999, (currentTime || 0) / (totalDuration || 1)));
-    const activeWordIndex = Math.floor(progress * totalWords);
-
-    let globalWordIdx = 0;
-    return paragraphsWithTokens.map((paraData, paraIdx) => {
-      const isBold = paraIdx === boldParagraphIndex;
-      return (
-        <div 
-          key={`p-${paraIdx}`} 
-          style={{ fontWeight: isBold ? '800' : undefined, whiteSpace: 'pre-wrap' }} 
-          className="mb-3"
-        >
-          {paraData.tokens.length === 0 ? <br /> : paraData.tokens.map((token, tokIdx) => {
-            const isWhitespace = /^\s+$/.test(token);
-            if (isWhitespace) {
-              return <span key={`tok-${tokIdx}`}>{token}</span>;
-            }
-
-            const currentWordIdx = globalWordIdx;
-            globalWordIdx++;
-
-            let isHighlighted = false;
-            if (highlightStyle === 'word-accumulate') {
-              isHighlighted = currentWordIdx <= activeWordIndex;
-            } else if (highlightStyle === 'word-single') {
-              isHighlighted = currentWordIdx === activeWordIndex;
-            }
-
-            if (isHighlighted) {
-              if (isBoxStyle) {
-                return (
-                  <span 
-                    key={`tok-${tokIdx}`}
-                    style={{ backgroundColor: activeColor, color: '#ffffff' }}
-                    className="px-1.5 py-0.5 rounded mx-0.5 inline font-extrabold shadow-sm text-white transition-all scale-[1.01]"
-                  >
-                    {token}
-                  </span>
-                );
-              } else {
-                return (
-                  <span 
-                    key={`tok-${tokIdx}`}
-                    style={{ color: activeColor }}
-                    className={cn("font-extrabold transition-all scale-[1.01]", highlightUnderline ? "underline decoration-2 underline-offset-4" : "")}
-                  >
-                    {token}
-                  </span>
-                );
-              }
-            }
-
-            return <span key={`tok-${tokIdx}`}>{token}</span>;
-          })}
-        </div>
-      );
-    });
-  };
-
   const fonts = [
     { label: 'Roboto', value: 'font-roboto' },
     { label: 'Open Sans', value: 'font-open-sans' },
@@ -2206,21 +1978,6 @@ export default function App() {
     { label: 'Playfair Display', value: 'font-playfair' },
   ];
 
-  const getPageVOTime = (index: number) => {
-    if (!uploadedVoiceOverUrl) return null;
-    const currentGlobalTime = isExporting ? exportVoiceOverTime : voiceOverPlaybackTime;
-    if (currentGlobalTime === null || currentGlobalTime === undefined) return null;
-    const { pageDurations, pageOffsets } = getPageAlignedTimes();
-    const offset = pageOffsets[index] || 0;
-    const duration = pageDurations[index] || exportDuration;
-    return Math.max(0, Math.min(duration, currentGlobalTime - offset));
-  };
-
-  const getPageVODuration = (index: number) => {
-    const { pageDurations } = getPageAlignedTimes();
-    return pageDurations[index] || exportDuration;
-  };
-
   const posterProps = {
     bgStyle, bgColor, gradEnd, avatarBorder, avatarBorderColor, profileImage, 
     scribbleStyle, profileMove, profilePosition, cardMove, footerMove, customHighlightColor, nameFont, nameHasBg, nameSize, nameColor, posterName, 
@@ -2232,6 +1989,10 @@ export default function App() {
     bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly, removePaddingWhenHidden,
     videoBackground, isExporting, boldParagraphIndex,
     storyImage, storyImageHeight, storyImageRadius, storyImageFit, imagePosition,
+    sentenceTimings,
+    activeSentenceIndex,
+    voiceOverHighlightColor,
+    voiceOverHighlightMode,
     isPicTextMode: activeTab === 'pictext'
   };
 
@@ -2274,22 +2035,15 @@ export default function App() {
       />
 
       {/* Background Music Audio Element */}
-      <audio 
-        ref={audioElementRef}
-        src={uploadedMusicUrl || undefined} 
-        loop 
-        muted={isMusicMuted || isExporting}
-        style={{ display: 'none' }}
-      />
-
-      {/* Voice Over Audio Element */}
-      <audio 
-        ref={voiceOverElementRef}
-        src={uploadedVoiceOverUrl || undefined} 
-        loop 
-        muted={isVoiceOverMuted || isExporting}
-        style={{ display: 'none' }}
-      />
+      {uploadedMusicUrl && (
+        <audio 
+          ref={audioElementRef}
+          src={uploadedMusicUrl} 
+          loop 
+          muted={isMusicMuted || isExporting}
+          style={{ display: 'none' }}
+        />
+      )}
 
       {/* Hidden CSV Input */}
       <input 
@@ -2487,12 +2241,7 @@ export default function App() {
                     <div className="space-y-4" onClick={(e) => e.stopPropagation()}>
                     <div className="flex justify-between items-center text-xs font-medium">
                       <span className="text-gray-400">Duration</span>
-                      <div className="flex items-center gap-1.5">
-                        {uploadedVoiceOverUrl && (
-                          <span className="text-[9px] bg-[#4f46e5]/10 text-[#818cf8] border border-[#4f46e5]/20 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider">Synced with VO</span>
-                        )}
-                        <span className="text-blue-400 font-mono">{exportDuration}s</span>
-                      </div>
+                      <span className="text-blue-400 font-mono">{exportDuration}s</span>
                     </div>
                     <input 
                       type="range" 
@@ -3870,7 +3619,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Voice Over Option */}
+                  {/* Voice-Over Sync Option */}
                   <div className="pt-4 border-t border-[#2a2d35] space-y-4">
                     <div>
                       <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block mb-2">Voice-Over Audio</label>
@@ -3878,286 +3627,195 @@ export default function App() {
                         type="file" 
                         ref={voiceOverFileInputRef} 
                         onChange={handleVoiceOverUpload} 
-                        accept="audio/*" 
+                        accept="audio/*, video/mp4, video/*" 
                         className="hidden" 
                       />
                       <div className="flex flex-col gap-2">
                         <button 
                           onClick={() => voiceOverFileInputRef.current?.click()}
-                          disabled={isVoiceOverDecoding}
                           className={cn(
                             "w-full flex items-center justify-center gap-2 font-bold py-3 rounded-xl transition-all shadow-lg active:scale-[0.98]",
-                            isVoiceOverDecoding
-                              ? "bg-amber-600 text-white animate-pulse"
-                              : uploadedVoiceOverUrl 
-                                ? "bg-indigo-600 hover:bg-indigo-700 text-white" 
-                                : "bg-[#2a2d35] hover:bg-[#353941] text-gray-300 border border-[#353941]"
+                            voiceOverUrl 
+                              ? "bg-emerald-600 hover:bg-emerald-700 text-white" 
+                              : "bg-[#2a2d35] hover:bg-[#353941] text-gray-300 border border-[#353941]"
                           )}
                         >
-                          <Mic size={16} className={cn(isVoiceOverDecoding && "animate-spin")} /> 
-                          {isVoiceOverDecoding 
-                            ? 'DECODING VOICE OVER...' 
-                            : uploadedVoiceOverUrl 
-                              ? 'CHANGE VOICE OVER' 
-                              : 'ADD VOICE OVER (MP3/WAV/M4A)'}
+                          <Mic size={16} /> 
+                          {voiceOverUrl ? 'CHANGE VOICE-OVER FILE' : 'ADD VOICE-OVER (MP3/WAV/MP4)'}
                         </button>
-                        {uploadedVoiceOverUrl && !isVoiceOverDecoding && (
-                          <div className="flex items-center gap-2 w-full">
-                            <button 
-                              onClick={() => setIsVoiceOverMuted(!isVoiceOverMuted)}
-                              className="flex-1 flex items-center justify-center gap-2 bg-[#2a2d35] hover:bg-[#353941] text-gray-300 border border-[#353941] py-2 rounded-lg text-xs font-bold transition-all"
-                              title={isVoiceOverMuted ? "Unmute Preview" : "Mute Preview"}
-                            >
-                              {isVoiceOverMuted ? (
-                                <>
-                                  <VolumeX size={14} className="text-red-400" />
-                                  <span>UNMUTE PREVIEW</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Volume2 size={14} className="text-indigo-400" />
-                                  <span>MUTE PREVIEW</span>
-                                </>
-                              )}
-                            </button>
-                            <button 
-                              onClick={() => {
-                                setUploadedVoiceOverFile(null);
-                                setUploadedVoiceOverUrl(null);
-                                setUploadedVoiceOverBuffer(null);
-                              }}
-                              className="p-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-lg transition-all"
-                              title="Remove Voice Over"
-                            >
-                              <Trash2 size={14} />
-                            </button>
+                        
+                        {voiceOverUrl && (
+                          <div className="flex flex-col gap-2 p-3 bg-[#1e2026] rounded-xl border border-[#2a2d35]">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-emerald-400">Voice-Over Active</span>
+                              <button 
+                                onClick={() => {
+                                  setVoiceOverFile(null);
+                                  setVoiceOverUrl(null);
+                                }}
+                                className="p-1 hover:bg-red-500/10 text-red-400 rounded transition-all"
+                                title="Remove Voice-over"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                            
+                            <p className="text-[10px] text-gray-400 font-medium truncate">
+                              {voiceOverFile?.name || 'Voice-Over Audio Stream'}
+                            </p>
+                            
+                            {/* Controls */}
+                            <div className="flex items-center gap-3 bg-[#13151b] p-2 rounded-lg mt-1">
+                              <button 
+                                onClick={toggleVoiceOverPlay}
+                                className="p-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-all"
+                              >
+                                {isPlayingVoiceOver ? <Pause size={14} /> : <Play size={14} />}
+                              </button>
+                              
+                              <div className="flex-1">
+                                <div className="flex justify-between text-[9px] text-gray-500 font-mono mb-0.5">
+                                  <span>{voiceOverPlaybackTime.toFixed(1)}s</span>
+                                  <span>{voiceOverDuration.toFixed(1)}s</span>
+                                </div>
+                                <div className="h-1 bg-gray-700 rounded-full overflow-hidden">
+                                  <div 
+                                    className="h-full bg-blue-500 transition-all duration-100"
+                                    style={{ width: `${voiceOverDuration > 0 ? (voiceOverPlaybackTime / voiceOverDuration) * 100 : 0}%` }}
+                                  />
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         )}
                       </div>
-                      
-                      {isVoiceOverDecoding && (
-                        <p className="text-[10px] text-amber-400 mt-2 text-center font-bold animate-pulse">
-                          ⏳ Decoding audio data...
-                        </p>
-                      )}
-
-                      {!isVoiceOverDecoding && uploadedVoiceOverFile && (
-                        <div className="mt-2 p-2.5 bg-[#2a2d35]/50 rounded-lg border border-[#353941] text-center">
-                          <p className="text-[10px] text-indigo-400 font-bold truncate">
-                            🎤 Voice-over Loaded: {uploadedVoiceOverFile.name}
-                          </p>
-                          {uploadedVoiceOverBuffer && (
-                            <p className="text-[9px] text-gray-400 mt-0.5 font-medium">
-                              Decoded PCM Stream • {(uploadedVoiceOverBuffer.sampleRate / 1000).toFixed(1)}kHz • {uploadedVoiceOverBuffer.numberOfChannels === 2 ? 'Stereo' : 'Mono'} • {Math.round(uploadedVoiceOverBuffer.duration)}s
-                            </p>
-                          )}
-                        </div>
-                      )}
-
-                      {!uploadedVoiceOverFile && !isVoiceOverDecoding && (
-                        <p className="text-[9px] text-gray-500 mt-2 text-center leading-relaxed">
-                          Upload high-quality voice-overs (MP3, WAV, M4A or similar). Play and test them directly synchronized in the live preview and output video!
-                        </p>
-                      )}
-
-                      {uploadedVoiceOverUrl && !isVoiceOverDecoding && (
-                        <div className="mt-3.5 pt-3.5 border-t border-[#30343f]/60 space-y-2">
-                          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Voice-Over Highlight Sync</label>
-                          <div className="grid grid-cols-2 gap-1.5">
-                            <button
-                              onClick={() => setVoiceOverHighlightStyle('word-accumulate')}
-                              className={cn(
-                                "py-1.5 px-2 text-[10px] font-bold rounded border transition-all text-center uppercase tracking-wider",
-                                voiceOverHighlightStyle === 'word-accumulate'
-                                  ? "bg-indigo-600/20 text-indigo-400 border-indigo-600/80"
-                                  : "bg-[#252830] text-gray-400 border-transparent hover:bg-[#2e323c]"
-                              )}
-                            >
-                              Accumulate Words
-                            </button>
-                            <button
-                              onClick={() => setVoiceOverHighlightStyle('word-single')}
-                              className={cn(
-                                "py-1.5 px-2 text-[10px] font-bold rounded border transition-all text-center uppercase tracking-wider",
-                                voiceOverHighlightStyle === 'word-single'
-                                  ? "bg-indigo-600/20 text-indigo-400 border-indigo-600/80"
-                                  : "bg-[#252830] text-gray-400 border-transparent hover:bg-[#2e323c]"
-                              )}
-                            >
-                              Single Word
-                            </button>
-                            <button
-                              onClick={() => setVoiceOverHighlightStyle('sentence-single')}
-                              className={cn(
-                                "py-1.5 px-2 text-[10px] font-bold rounded border transition-all text-center uppercase tracking-wider",
-                                voiceOverHighlightStyle === 'sentence-single'
-                                  ? "bg-indigo-600/20 text-indigo-400 border-indigo-600/80"
-                                  : "bg-[#252830] text-gray-400 border-transparent hover:bg-[#2e323c]"
-                              )}
-                            >
-                              Sentence
-                            </button>
-                            <button
-                              onClick={() => setVoiceOverHighlightStyle('none')}
-                              className={cn(
-                                "py-1.5 px-2 text-[10px] font-bold rounded border transition-all text-center uppercase tracking-wider",
-                                voiceOverHighlightStyle === 'none'
-                                  ? "bg-indigo-600/20 text-indigo-400 border-indigo-600/80"
-                                  : "bg-[#252830] text-gray-400 border-transparent hover:bg-[#2e323c]"
-                              )}
-                            >
-                              No Highlights
-                            </button>
-                          </div>
-
-                          {voiceOverHighlightStyle !== 'none' && (
-                            <div className="bg-[#181a21]/50 border border-[#2e323c]/40 rounded-xl p-3 space-y-2">
-                              <div className="flex items-center justify-between">
-                                <label className="text-[10px] font-extrabold text-gray-400 uppercase tracking-style block">Sync Highlight Color</label>
-                                <span className="text-[9px] text-indigo-400 font-mono">{syncHighlightColor}</span>
-                              </div>
-                              <div className="flex items-center gap-2.5">
-                                <input 
-                                  type="color" 
-                                  value={syncHighlightColor} 
-                                  onChange={(e) => setSyncHighlightColor(e.target.value)} 
-                                  className="w-8 h-8 rounded-lg border border-[#353941]/60 cursor-pointer bg-transparent flex-shrink-0" 
-                                />
-                                <input 
-                                  type="text" 
-                                  value={syncHighlightColor} 
-                                  onChange={(e) => setSyncHighlightColor(e.target.value)} 
-                                  className="w-full bg-[#14161b] border border-[#2a2d35] rounded-md px-2.5 py-1 text-[10px] font-mono outline-none focus:border-indigo-500 text-gray-300" 
-                                />
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Beautiful Interactive Wave/Scrub Player */}
-                          <div className="mt-3.5 bg-[#181a21]/80 border border-[#2e323c]/65 rounded-xl p-3 space-y-3 shadow-md">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[10px] font-extrabold text-indigo-400 uppercase tracking-widest">LIVE SYNC PREVIEW PLAYER</span>
-                              <span className="text-[10px] font-mono text-gray-400 bg-[#252830] py-0.5 px-2 rounded border border-[#30343f]">
-                                {formatTime(voiceOverPlaybackTime)} / {formatTime(uploadedVoiceOverBuffer?.duration || 0)}
-                              </span>
-                            </div>
-
-                            {/* Interactive Scrub Bar */}
-                            <div 
-                              className="h-2.5 w-full bg-[#0e1014] rounded-full overflow-hidden cursor-pointer relative group border border-[#2e323c]/40"
-                              onClick={(e) => {
-                                const rect = e.currentTarget.getBoundingClientRect();
-                                const clickX = e.clientX - rect.left;
-                                const pct = Math.max(0, Math.min(1, clickX / rect.width));
-                                const duration = uploadedVoiceOverBuffer?.duration || 10;
-                                const targetTime = pct * duration;
-                                if (voiceOverElementRef.current) {
-                                  voiceOverElementRef.current.currentTime = targetTime;
-                                  setVoiceOverPlaybackTime(targetTime);
-                                }
-                              }}
-                            >
-                              <div 
-                                className="h-full bg-indigo-500 rounded-full transition-all group-hover:bg-indigo-400"
-                                style={{ width: `${Math.min(100, Math.max(0, (voiceOverPlaybackTime / (uploadedVoiceOverBuffer?.duration || 1)) * 105))}%` }}
-                              />
-                              <div 
-                                className="absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow border border-indigo-500/50"
-                                style={{ left: `calc(${Math.min(100, Math.max(0, (voiceOverPlaybackTime / (uploadedVoiceOverBuffer?.duration || 1)) * 100))}% - 7px)` }}
-                              />
-                            </div>
-
-                            <div className="flex items-center justify-between pt-1">
-                              <button
-                                onClick={() => {
-                                  if (voiceOverElementRef.current) {
-                                    if (isVoiceOverPlaying) {
-                                      voiceOverElementRef.current.pause();
-                                    } else {
-                                      voiceOverElementRef.current.play().catch(err => console.log('Bypass play fail:', err));
-                                    }
-                                  }
-                                }}
-                                className={cn(
-                                  "py-1.5 px-3 rounded-lg text-[10px] font-bold transition-all flex items-center justify-center gap-1.5 active:scale-95 shadow-md",
-                                  isVoiceOverPlaying 
-                                    ? "bg-rose-600/20 text-rose-400 border border-rose-600/30 hover:bg-rose-600/30" 
-                                    : "bg-indigo-500 hover:bg-indigo-600 text-white shadow-indigo-500/20"
-                                )}
-                              >
-                                {isVoiceOverPlaying ? (
-                                  <>
-                                    <Pause size={12} strokeWidth={2.5} />
-                                    <span>PAUSE PREVIEW</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Play size={12} strokeWidth={2.5} />
-                                    <span>PLAY PREVIEW</span>
-                                  </>
-                                )}
-                              </button>
-
-                              <button
-                                onClick={() => {
-                                  if (voiceOverElementRef.current) {
-                                    voiceOverElementRef.current.currentTime = 0;
-                                    setVoiceOverPlaybackTime(0);
-                                    voiceOverElementRef.current.play().catch(err => console.log('Bypass restart play fail:', err));
-                                  }
-                                }}
-                                className="py-1.5 px-3 bg-[#242730] hover:bg-[#2d313d] text-gray-300 font-bold rounded-lg text-[10px] transition-all flex items-center justify-center gap-1.5 border border-[#30343f] active:scale-95"
-                              >
-                                <RotateCcw size={12} strokeWidth={2.5} />
-                                <span>RESTART</span>
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      )}
                     </div>
+
+                    {/* Highlight Styling Controls */}
+                    <div className="space-y-3 pt-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs text-gray-400">Highlight Color</span>
+                        <div className="flex items-center gap-2">
+                          <input 
+                            type="color" 
+                            value={voiceOverHighlightColor} 
+                            onChange={(e) => setVoiceOverHighlightColor(e.target.value)} 
+                            className="w-6 h-6 border-0 rounded cursor-pointer p-0 bg-transparent"
+                          />
+                          <input 
+                            type="text" 
+                            value={voiceOverHighlightColor} 
+                            onChange={(e) => setVoiceOverHighlightColor(e.target.value)} 
+                            className="w-20 px-1.5 py-0.5 bg-[#1a1d23] border border-[#2a2d35] rounded font-mono text-[10px] text-white text-center"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs text-gray-400">Highlight Style</span>
+                        <div className="flex bg-[#1a1d23] p-0.5 rounded-lg border border-[#2a2d35]">
+                          <button 
+                            onClick={() => setVoiceOverHighlightMode('bg')}
+                            className={cn(
+                              "px-2.5 py-1 text-[10px] font-bold rounded-md transition-all",
+                              voiceOverHighlightMode === 'bg' ? "bg-blue-500 text-white" : "text-gray-400 hover:text-white"
+                            )}
+                          >
+                            CONTAINER
+                          </button>
+                          <button 
+                            onClick={() => setVoiceOverHighlightMode('text')}
+                            className={cn(
+                              "px-2.5 py-1 text-[10px] font-bold rounded-md transition-all",
+                              voiceOverHighlightMode === 'text' ? "bg-blue-500 text-white" : "text-gray-400 hover:text-white"
+                            )}
+                          >
+                            TEXT SPOT
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Interactive Timings Editor */}
+                    {voiceOverUrl && sentenceTimings.length > 0 && (
+                      <div className="space-y-2 mt-4 pt-4 border-t border-[#2a2d35]">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Adjust Offset Timings</span>
+                          <button 
+                            onClick={() => {
+                              const sentences = splitIntoSentences(storyText);
+                              const totalChars = sentences.reduce((acc, s) => acc + s.length, 0);
+                              let elapsed = 0;
+                              const resetTimings = sentences.map((sent, index) => {
+                                const segDur = totalChars > 0 ? (sent.length / totalChars) * voiceOverDuration : voiceOverDuration / sentences.length;
+                                const start = elapsed;
+                                const end = elapsed + segDur;
+                                elapsed = end;
+                                return { index, text: sent, start: Number(start.toFixed(2)), end: Number(end.toFixed(2)) };
+                              });
+                              setSentenceTimings(resetTimings);
+                            }}
+                            className="text-[9px] font-extrabold text-blue-400 hover:underline uppercase"
+                            title="Auto sync based on sentence length"
+                          >
+                            AUTO SYNC
+                          </button>
+                        </div>
+                        
+                        <div className="space-y-3 max-h-60 overflow-y-auto pr-1 bg-[#14161b]/80 p-2.5 rounded-xl border border-[#2a2d35]">
+                          {sentenceTimings.map((t, index) => (
+                            <div key={index} className="p-2 border border-[#2a2d35]/50 bg-[#1a1d23]/50 rounded-lg hover:border-[#353941] hover:bg-[#1a1d23] transition-all">
+                              <div className="flex items-center justify-between mb-1">
+                                <span className={cn(
+                                  "text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide",
+                                  activeSentenceIndex === index ? "bg-blue-800 text-blue-300 animate-pulse" : "bg-gray-800 text-gray-500"
+                                )}>
+                                  Sentence #{index + 1}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-gray-300 italic mb-2 leading-relaxed font-medium line-clamp-3">
+                                "{t.text}"
+                              </p>
+                              <div className="flex gap-4">
+                                <div className="flex-1 flex items-center gap-1.5">
+                                  <span className="text-[10px] text-gray-500 uppercase tracking-widest">Start:</span>
+                                  <input 
+                                    type="number" 
+                                    step="0.05" 
+                                    value={t.start} 
+                                    onChange={(e) => {
+                                      const val = parseFloat(e.target.value) || 0;
+                                      const updated = [...sentenceTimings];
+                                      updated[index].start = Number(Math.max(0, val).toFixed(2));
+                                      setSentenceTimings(updated);
+                                    }} 
+                                    className="w-full px-1.5 py-0.5 bg-[#252830] border border-[#353941] rounded font-mono text-xs text-white"
+                                  />
+                                  <span className="text-[10px] text-gray-500 font-mono">s</span>
+                                </div>
+                                <div className="flex-1 flex items-center gap-1.5">
+                                  <span className="text-[10px] text-gray-500 uppercase tracking-widest">End:</span>
+                                  <input 
+                                    type="number" 
+                                    step="0.05" 
+                                    value={t.end} 
+                                    onChange={(e) => {
+                                      const val = parseFloat(e.target.value) || 0;
+                                      const updated = [...sentenceTimings];
+                                      updated[index].end = Number(Math.max(0, val).toFixed(2));
+                                      setSentenceTimings(updated);
+                                    }} 
+                                    className="w-full px-1.5 py-0.5 bg-[#252830] border border-[#353941] rounded font-mono text-xs text-white"
+                                  />
+                                  <span className="text-[10px] text-gray-500 font-mono">s</span>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
-
-                  {/* Independent Volume Controls */}
-                  {(uploadedMusicUrl || uploadedVoiceOverUrl) && (
-                    <div className="pt-4 border-t border-[#2a2d35] space-y-4">
-                      <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block font-mono tracking-wide text-gray-400">Volume Mixer</label>
-                      
-                      {uploadedMusicUrl && (
-                        <div>
-                          <div className="flex justify-between items-center mb-1">
-                            <span className="text-xs text-gray-400">Background Music (Preview & Export)</span>
-                            <span className="text-xs font-mono text-gray-500">{musicVolume}%</span>
-                          </div>
-                          <input 
-                            type="range" 
-                            min="0" 
-                            max="100" 
-                            value={musicVolume} 
-                            onChange={(e) => setMusicVolume(parseInt(e.target.value))} 
-                            className="w-full accent-emerald-500 cursor-pointer" 
-                          />
-                        </div>
-                      )}
-
-                      {uploadedVoiceOverUrl && (
-                        <div>
-                          <div className="flex justify-between items-center mb-1">
-                            <span className="text-xs text-gray-400">Voice Over (Preview & Export)</span>
-                            <span className="text-xs font-mono text-gray-500">{voiceOverVolume}%</span>
-                          </div>
-                          <input 
-                            type="range" 
-                            min="0" 
-                            max="100" 
-                            value={voiceOverVolume} 
-                            onChange={(e) => setVoiceOverVolume(parseInt(e.target.value))} 
-                            className="w-full accent-indigo-500 cursor-pointer" 
-                          />
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
               </motion.div>
             )}
@@ -5149,10 +4807,6 @@ export default function App() {
                   fSize={fontSize}
                   boxHighlight={boxHighlight}
                   innerRef={previewRef} 
-                  voiceOverTime={uploadedVoiceOverUrl ? (isExporting ? exportVoiceOverTime : voiceOverPlaybackTime) : null}
-                  voiceOverDuration={uploadedVoiceOverBuffer ? uploadedVoiceOverBuffer.duration : exportDuration}
-                  voiceOverHighlightStyle={voiceOverHighlightStyle}
-                  renderSyncedText={renderSyncedText}
                 />
               </div>
             </div>
@@ -5191,10 +4845,6 @@ export default function App() {
                       boxHighlight={story.boxHighlight}
                       boldParagraphIndex={story.boldParagraphIndex !== undefined ? story.boldParagraphIndex : null}
                       innerRef={originalIndex === 0 ? previewRef : null} 
-                      voiceOverTime={getPageVOTime(displayIndex)}
-                      voiceOverDuration={getPageVODuration(displayIndex)}
-                      voiceOverHighlightStyle={voiceOverHighlightStyle}
-                      renderSyncedText={renderSyncedText}
                     />
                   </div>
                 </div>
@@ -5236,10 +4886,6 @@ export default function App() {
                       boxHighlight={story.boxHighlight}
                       boldParagraphIndex={story.boldParagraphIndex !== undefined ? story.boldParagraphIndex : null}
                       innerRef={originalIndex === 0 ? previewRef : null} 
-                      voiceOverTime={getPageVOTime(displayIndex)}
-                      voiceOverDuration={getPageVODuration(displayIndex)}
-                      voiceOverHighlightStyle={voiceOverHighlightStyle}
-                      renderSyncedText={renderSyncedText}
                     />
                   </div>
                 </div>
@@ -5273,10 +4919,85 @@ function Poster({
   videoBackground, isExporting, boldParagraphIndex,
   storyImage, storyImageHeight, storyImageRadius, storyImageFit, isPicTextMode,
   boxHighlight, imagePosition,
-  voiceOverTime, voiceOverDuration, voiceOverHighlightStyle, renderSyncedText
+  sentenceTimings, activeSentenceIndex, voiceOverHighlightColor, voiceOverHighlightMode
 }: any) {
   const isCardPadded = showCard || !removePaddingWhenHidden;
   const isBlur = scribbleStyle === 'blur' || scribbleStyle === 'title-blur';
+
+  const splitIntoSentences = (text: string): string[] => {
+    if (!text) return [];
+    const rawSentences = text
+      .split(/(?<=[.!?])\s+/)
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+    if (rawSentences.length === 0) return [text];
+    return rawSentences;
+  };
+
+  const renderTimedStoryParagraph = (para: string, paraIndex: number) => {
+    if (!para.trim()) return <br />;
+
+    if (!sentenceTimings || sentenceTimings.length === 0) {
+      return renderStoryText(para, hColor, boxHighlight);
+    }
+
+    const sentences = splitIntoSentences(para);
+    
+    let globalOffset = 0;
+    const allParagraphsBefore = storyText.split('\n').slice(0, paraIndex);
+    allParagraphsBefore.forEach((prevPara) => {
+      globalOffset += splitIntoSentences(prevPara).length;
+    });
+
+    return (
+      <>
+        {sentences.map((sentence, sIdx) => {
+          const globalIdx = globalOffset + sIdx;
+          const isActive = activeSentenceIndex === globalIdx;
+          
+          if (isActive) {
+            if (voiceOverHighlightMode === 'bg') {
+              return (
+                <span 
+                  key={sIdx}
+                  style={{ 
+                    backgroundColor: voiceOverHighlightColor, 
+                    color: '#000000',
+                    transition: 'all 0.3s ease'
+                  }} 
+                  className="px-2.5 py-1 rounded-xl mx-1 inline-block font-black shadow-md scale-105 text-black animate-pulse"
+                >
+                  {renderStoryText(sentence, hColor, boxHighlight)}
+                </span>
+              );
+            } else {
+              return (
+                <span 
+                  key={sIdx}
+                  style={{ 
+                    color: voiceOverHighlightColor,
+                    transition: 'all 0.3s ease'
+                  }} 
+                  className="font-black scale-105 underline decoration-wavy decoration-3 select-all transition-all mx-1 inline-block"
+                >
+                  {renderStoryText(sentence, hColor, boxHighlight)}
+                </span>
+              );
+            }
+          } else {
+            return (
+              <span 
+                key={sIdx}
+                className="opacity-45 transition-all duration-300 mx-0.5"
+              >
+                {renderStoryText(sentence, hColor, boxHighlight)}
+              </span>
+            );
+          }
+        })}
+      </>
+    );
+  };
 
   if (isPicTextMode) {
     return (
@@ -5344,25 +5065,21 @@ function Poster({
               fontStyle: fontStyle === 'italic' ? 'italic' : 'normal',
             }}
           >
-            {voiceOverTime !== null && voiceOverTime !== undefined && voiceOverHighlightStyle !== 'none' && renderSyncedText ? (
-              renderSyncedText(storyText, hColor, voiceOverTime, voiceOverDuration, voiceOverHighlightStyle, boxHighlight, boldParagraphIndex)
-            ) : (
-              storyText.split('\n').map((para, index) => {
-                const isBold = index === boldParagraphIndex;
-                return (
-                  <div 
-                    key={index}
-                    style={{
-                      fontWeight: isBold ? '800' : undefined,
-                      whiteSpace: 'pre-wrap',
-                      marginBottom: '1.5em'
-                    }}
-                  >
-                    {para === '' ? <br /> : renderStoryText(para, hColor, boxHighlight)}
-                  </div>
-                );
-              })
-            )}
+            {storyText.split('\n').map((para, index) => {
+              const isBold = index === boldParagraphIndex;
+              return (
+                <div 
+                  key={index}
+                  style={{
+                    fontWeight: isBold ? '800' : undefined,
+                    whiteSpace: 'pre-wrap',
+                    marginBottom: '1.5em'
+                  }}
+                >
+                  {para === '' ? <br /> : renderTimedStoryParagraph(para, index)}
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -5650,24 +5367,20 @@ function Poster({
                   fontStyle: fontStyle === 'italic' ? 'italic' : 'normal',
                 }}
               >
-                {voiceOverTime !== null && voiceOverTime !== undefined && voiceOverHighlightStyle !== 'none' && renderSyncedText ? (
-                  renderSyncedText(storyText, hColor, voiceOverTime, voiceOverDuration, voiceOverHighlightStyle, boxHighlight, boldParagraphIndex)
-                ) : (
-                  storyText.split('\n').map((para, index) => {
-                    const isBold = index === boldParagraphIndex;
-                    return (
-                      <div 
-                        key={index}
-                        style={{
-                          fontWeight: isBold ? '800' : undefined,
-                          whiteSpace: 'pre-wrap'
-                        }}
-                      >
-                        {para === '' ? <br /> : renderStoryText(para, hColor, boxHighlight)}
-                      </div>
-                    );
-                  })
-                )}
+                {storyText.split('\n').map((para, index) => {
+                  const isBold = index === boldParagraphIndex;
+                  return (
+                    <div 
+                      key={index}
+                      style={{
+                        fontWeight: isBold ? '800' : undefined,
+                        whiteSpace: 'pre-wrap'
+                      }}
+                    >
+                      {para === '' ? <br /> : renderTimedStoryParagraph(para, index)}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
