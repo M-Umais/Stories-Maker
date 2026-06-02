@@ -847,21 +847,54 @@ export default function App() {
   const [voiceOverDuration, setVoiceOverDuration] = useState<number>(0);
   const [voiceOverPlaybackTime, setVoiceOverPlaybackTime] = useState<number>(0);
   const [isPlayingVoiceOver, setIsPlayingVoiceOver] = useState<boolean>(false);
-  const [voiceOverHighlightColor, setVoiceOverHighlightColor] = useState<string>('#facc15');
-  const [voiceOverHighlightMode, setVoiceOverHighlightMode] = useState<'text' | 'bg'>('bg');
+  const [voiceOverHighlightColor, setVoiceOverHighlightColor] = useState<string>('#f59e0b');
+  const [voiceOverHighlightMode, setVoiceOverHighlightMode] = useState<'text' | 'bg'>('text');
+  const [voiceOverDimInactive, setVoiceOverDimInactive] = useState<boolean>(false);
+  const [voiceOverSyncMode, setVoiceOverSyncMode] = useState<'accumulate' | 'word' | 'sentence' | 'none'>('sentence');
+  const [isVoiceOverMuted, setIsVoiceOverMuted] = useState<boolean>(false);
+  const [voiceVolume, setVoiceVolume] = useState<number>(1.0);
   const [sentenceTimings, setSentenceTimings] = useState<any[]>([]);
   const [activeSentenceIndex, setActiveSentenceIndex] = useState<number | null>(null);
+  const [currentCaptureCardIdx, setCurrentCaptureCardIdx] = useState<number | null>(null);
+  const [currentCaptureCardTimings, setCurrentCaptureCardTimings] = useState<any[]>([]);
   const voiceOverFileInputRef = useRef<HTMLInputElement>(null);
   const voiceOverAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    if (voiceOverAudioRef.current) {
+      voiceOverAudioRef.current.volume = voiceVolume;
+    }
+  }, [voiceVolume]);
+
+  useEffect(() => {
+    if (voiceOverAudioRef.current) {
+      voiceOverAudioRef.current.muted = isVoiceOverMuted;
+    }
+  }, [isVoiceOverMuted]);
+
+  const sentenceTimingsRef = useRef<any[]>([]);
+  useEffect(() => {
+    sentenceTimingsRef.current = sentenceTimings;
+  }, [sentenceTimings]);
 
   const splitIntoSentences = (text: string): string[] => {
     if (!text) return [];
     const rawSentences = text
-      .split(/(?<=[.!?])\s+/)
+      .split(/(?<=[.!?])(?!\.)\s*/)
       .map(s => s.trim())
       .filter(s => s.length > 0);
     if (rawSentences.length === 0) return [text];
     return rawSentences;
+  };
+
+  const splitStoryTextIntoSentences = (text: string): string[] => {
+    if (!text) return [];
+    const paragraphs = text.split('\n');
+    const allSentences: string[] = [];
+    paragraphs.forEach((para) => {
+      allSentences.push(...splitIntoSentences(para));
+    });
+    return allSentences;
   };
 
   // Footer State
@@ -896,6 +929,17 @@ export default function App() {
       setVoiceOverFile(file);
       const url = URL.createObjectURL(file);
       setVoiceOverUrl(url);
+
+      // Automatically remove any previously applied highlights (brackets [ and ])
+      setStoryText(prev => prev ? prev.replace(/[\[\]]/g, '') : '');
+      setBulkStories(prev => prev.map(story => ({
+        ...story,
+        text: story.text ? story.text.replace(/[\[\]]/g, '') : ''
+      })));
+      setPicTextBulkStories(prev => prev.map(story => ({
+        ...story,
+        text: story.text ? story.text.replace(/[\[\]]/g, '') : ''
+      })));
     }
   };
 
@@ -918,6 +962,7 @@ export default function App() {
       const audio = voiceOverAudioRef.current || new Audio(voiceOverUrl);
       voiceOverAudioRef.current = audio;
       audio.src = voiceOverUrl;
+      audio.volume = voiceVolume;
       
       const handleLoadedMetadata = () => {
         const dur = audio.duration;
@@ -926,7 +971,7 @@ export default function App() {
         setExportDuration(Math.ceil(dur));
         
         // Split and distribute timings
-        const sentences = splitIntoSentences(storyText);
+        const sentences = splitStoryTextIntoSentences(storyText);
         const totalChars = sentences.reduce((acc, s) => acc + s.length, 0);
         let elapsed = 0;
         const newTimings = sentences.map((sent, index) => {
@@ -943,8 +988,9 @@ export default function App() {
         const curr = audio.currentTime;
         setVoiceOverPlaybackTime(curr);
         
-        if (sentenceTimings && sentenceTimings.length > 0) {
-          const activeSeg = sentenceTimings.find(s => curr >= s.start && curr <= s.end);
+        const currentTimings = sentenceTimingsRef.current;
+        if (currentTimings && currentTimings.length > 0) {
+          const activeSeg = currentTimings.find(s => curr >= s.start && curr <= s.end);
           if (activeSeg) {
             setActiveSentenceIndex(activeSeg.index);
           } else {
@@ -983,7 +1029,7 @@ export default function App() {
   // Recalculate timings if storyText edits while voiceOver has a duration
   useEffect(() => {
     if (voiceOverUrl && voiceOverDuration > 0) {
-      const sentences = splitIntoSentences(storyText);
+      const sentences = splitStoryTextIntoSentences(storyText);
       const totalChars = sentences.reduce((acc, s) => acc + s.length, 0);
       let elapsed = 0;
       const newTimings = sentences.map((sent, index) => {
@@ -1324,146 +1370,239 @@ export default function App() {
     cancelExportRef.current = false;
     setIsExporting(true);
     setExportProgress(0);
-    setBulkExportInfo(`Initializing bulk export...`);
-    
-    // Dynamically import jszip inside the handler to keep the initial bundle smaller
-    const JSZip = (await import('jszip')).default;
-    const zip = new JSZip();
-    const total = cardElements.length;
-    
-    // Wait for UI to update (hide video backgrounds)
+    setBulkExportInfo(`Initializing bulk server-side export...`);
+
     try {
+      const formData = new FormData();
+      const total = cardElements.length;
+      formData.append('page_count', total.toString());
+
+      // Let's determine page duration
+      const pageDuration = voiceOverUrl && voiceOverDuration > 0 ? voiceOverDuration : exportDuration;
+
+      // Select stories list based on active tab
+      const storiesList = activeTab === 'pictext' ? picTextBulkStories : bulkStories;
+
+      // Pause preview playbacks if running
+      if (voiceOverAudioRef.current) {
+        voiceOverAudioRef.current.pause();
+        setIsPlayingVoiceOver(false);
+      }
+
       await new Promise(r => setTimeout(r, 500));
       if (cancelExportRef.current) throw new Error('Export cancelled');
-      
-      for (let i = 0; i < total; i++) {
+
+      // Loop over cards to capture their frames sequentially
+      for (let p = 0; p < total; p++) {
         if (cancelExportRef.current) throw new Error('Export cancelled');
-        const node = cardElements[i] as HTMLElement;
-        setBulkExportInfo(`Rendering Card ${i + 1} of ${total}`);
-        
-        const dataUrl = await toPng(node, {
-          cacheBust: true,
-          pixelRatio: 1,
-          width: 1080,
-          height: 1920,
-          style: {
-            transform: 'none',
-            transformOrigin: 'top left',
-            width: '1080px',
-            height: '1920px'
+        const node = cardElements[p] as HTMLElement;
+        const story = storiesList[p];
+        const pageText = story ? story.text : '';
+
+        if (voiceOverFile && pageText.trim().length > 0) {
+          // Sync timing mode for this page
+          setBulkExportInfo(`Calculating sentence highlight sync for Page ${p + 1}...`);
+          
+          const sentences = pageText
+            .split(/(?<=[.!?])(?!\.)\s*/)
+            .map(s => s.trim())
+            .filter(s => s.length > 0);
+          
+          let pageTimings: any[] = [];
+          if (sentences.length > 0) {
+            const totalChars = sentences.reduce((acc, s) => acc + s.length, 0);
+            let elapsed = 0;
+            pageTimings = sentences.map((sent, index) => {
+              const segDur = totalChars > 0 ? (sent.length / totalChars) * pageDuration : pageDuration / sentences.length;
+              const start = elapsed;
+              const end = elapsed + segDur;
+              elapsed = end;
+              return { index, text: sent, start: Number(start.toFixed(2)), end: Number(end.toFixed(2)) };
+            });
           }
-        });
 
-        if (cancelExportRef.current) throw new Error('Export cancelled');
+          // Trigger state so this current card renders with its highlighting enabled
+          setCurrentCaptureCardTimings(pageTimings);
+          setCurrentCaptureCardIdx(p);
 
-        const formData = new FormData();
-        const imageBlob = await fetch(dataUrl).then((r) => r.blob());
-        const imgFile = new File([imageBlob], `overlay-${i + 1}.png`, { type: 'image/png' });
-        formData.append('image', imgFile);
+          // Capture base frame (no sentence highlighted)
+          setBulkExportInfo(`Capturing base frame for Page ${p + 1}...`);
+          setActiveSentenceIndex(null);
+          await new Promise((resolve) => setTimeout(resolve, 250));
 
-        if (videoBackground) {
-          try {
-            const videoBlob = await fetch(videoBackground).then((r) => r.blob());
-            const videoFile = new File([videoBlob], 'background.mp4', { type: videoBlob.type || 'video/mp4' });
-            formData.append('video', videoFile);
-          } catch (err) {
-            console.error('Failed to prepare background video for server upload:', err);
-          }
-        }
-
-        if (uploadedMusicFile) {
-          formData.append('audio', uploadedMusicFile);
-        }
-
-        formData.append('duration', exportDuration.toString());
-
-        const controller = new AbortController();
-        abortControllerRef.current = controller;
-
-        const response = await fetch('/api/render', {
-          method: 'POST',
-          body: formData,
-          signal: controller.signal,
-        });
-
-        if (!response.ok) {
-          throw new Error(`Server execution failure (HTTP ${response.status})`);
-        }
-
-        const reader = response.body?.getReader();
-        if (!reader) throw new Error('ReadableStream processing not supported by your browser.');
-
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let finalDownloadUrl = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (cancelExportRef.current) {
-            controller.abort();
-            throw new Error('Export cancelled');
-          }
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-              const data = JSON.parse(line);
-              if (data.status === 'rendering') {
-                const cardProgress = data.progress;
-                const overallProgress = Math.floor(((i + (cardProgress / 100)) / total) * 100);
-                setExportProgress(overallProgress);
-              } else if (data.status === 'completed') {
-                finalDownloadUrl = data.downloadUrl;
-              } else if (data.status === 'error') {
-                throw new Error(data.error || 'Server rendering process returned an error');
-              }
-            } catch (e: any) {
-              if (e instanceof Error && e.message.includes('Server rendering')) {
-                throw e;
-              }
-              console.warn('Chunk parsing minor warning:', e);
+          const baseImgDataUrl = await toPng(node, {
+            cacheBust: true,
+            pixelRatio: 1,
+            width: 1080,
+            height: 1920,
+            style: {
+              transform: 'none',
+              transformOrigin: 'top left',
+              width: '1080px',
+              height: '1920px'
             }
+          });
+          const baseBlob = await fetch(baseImgDataUrl).then(r => r.blob());
+          formData.append(`page_${p}_image_base`, baseBlob, `page-${p}-base-frame.png`);
+
+          // Capture sequential highlight frames
+          for (let j = 0; j < pageTimings.length; j++) {
+            if (cancelExportRef.current) throw new Error('Export cancelled');
+            setBulkExportInfo(`Capturing highlight frame ${j + 1}/${pageTimings.length} for Page ${p + 1}...`);
+            setActiveSentenceIndex(j);
+            await new Promise((resolve) => setTimeout(resolve, 250));
+
+            const highlightImgDataUrl = await toPng(node, {
+              cacheBust: true,
+              pixelRatio: 1,
+              width: 1080,
+              height: 1920,
+              style: {
+                transform: 'none',
+                transformOrigin: 'top left',
+                width: '1080px',
+                height: '1920px'
+              }
+            });
+            const highlightBlob = await fetch(highlightImgDataUrl).then(r => r.blob());
+            formData.append(`page_${p}_image_${j}`, highlightBlob, `page-${p}-highlight-${j}.png`);
+          }
+
+          // Record timings metadata for the database/server
+          formData.append(`page_${p}_timings`, JSON.stringify(pageTimings.map(t => ({
+            start: t.start,
+            end: t.end,
+            index: t.index
+          }))));
+        } else {
+          // Standard single snapshot mode
+          setBulkExportInfo(`Capturing snapshot for Page ${p + 1}...`);
+          
+          const singleImgDataUrl = await toPng(node, {
+            cacheBust: true,
+            pixelRatio: 1,
+            width: 1080,
+            height: 1920,
+            style: {
+              transform: 'none',
+              transformOrigin: 'top left',
+              width: '1080px',
+              height: '1920px'
+            }
+          });
+          const singleBlob = await fetch(singleImgDataUrl).then(r => r.blob());
+          formData.append(`page_${p}_image`, singleBlob, `page-${p}-snapshot.png`);
+        }
+      }
+
+      // Reset capture state markers
+      setCurrentCaptureCardIdx(null);
+      setCurrentCaptureCardTimings([]);
+      setActiveSentenceIndex(null);
+
+      // Attach any common audio, video background files
+      if (videoBackground) {
+        try {
+          const videoBlob = await fetch(videoBackground).then((r) => r.blob());
+          const videoFile = new File([videoBlob], 'background.mp4', { type: videoBlob.type || 'video/mp4' });
+          formData.append('video', videoFile);
+        } catch (err) {
+          console.error('Failed to prepare background video for server upload:', err);
+        }
+      }
+
+      if (uploadedMusicFile) {
+        formData.append('audio', uploadedMusicFile);
+      }
+
+      if (voiceOverFile) {
+        formData.append('voiceover', voiceOverFile);
+      }
+
+      formData.append('duration', pageDuration.toString());
+      formData.append('voiceVolume', voiceVolume.toString());
+
+      setBulkExportInfo('Sending render queue to server...');
+
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
+      const response = await fetch('/api/render-bulk-zip', {
+        method: 'POST',
+        body: formData,
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server execution failure (HTTP ${response.status})`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('ReadableStream processing not supported by your browser.');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let finalDownloadUrl = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (cancelExportRef.current) {
+          controller.abort();
+          throw new Error('Export cancelled');
+        }
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const data = JSON.parse(line);
+            if (data.status === 'rendering') {
+              setExportProgress(data.progress || 0);
+              if (data.message) {
+                setBulkExportInfo(data.message);
+              }
+            } else if (data.status === 'completed') {
+              finalDownloadUrl = data.downloadUrl;
+            } else if (data.status === 'error') {
+              throw new Error(data.error || 'Server rendering process returned an error');
+            }
+          } catch (e: any) {
+            if (e instanceof Error && e.message.includes('Server rendering')) {
+              throw e;
+            }
+            console.warn('Chunk parsing minor warning:', e);
           }
         }
-
-        if (!finalDownloadUrl) {
-          throw new Error('Render completed but no download url was returned by server');
-        }
-
-        const fileResponse = await fetch(finalDownloadUrl, { signal: controller.signal });
-        if (!fileResponse.ok) {
-          throw new Error(`Failed to fetch rendered video from ${finalDownloadUrl}`);
-        }
-        const videoBlob = await fileResponse.blob();
-        zip.file(`story-${i + 1}.mp4`, videoBlob);
-        
-        // Update progress of completed card
-        setExportProgress(Math.floor(((i + 1) / total) * 100));
       }
-      
-      if (cancelExportRef.current) throw new Error('Export cancelled');
-      setBulkExportInfo('Generating ZIP file...');
-      const zipBlob = await zip.generateAsync({ type: 'blob' });
-      const url = URL.createObjectURL(zipBlob);
+
+      if (!finalDownloadUrl) {
+        throw new Error('Render completed but no download ZIP url was returned by server');
+      }
+
+      setBulkExportInfo('Downloading generated ZIP file...');
       const link = document.createElement('a');
-      link.href = url;
+      link.href = finalDownloadUrl;
       link.download = `bulk-stories-${Date.now()}.zip`;
       link.click();
-      
+
       setIsExporting(false);
       setExportProgress(0);
       setBulkExportInfo('');
       setIsExportModalOpen(false);
+
     } catch (err: any) {
+      setCurrentCaptureCardIdx(null);
+      setCurrentCaptureCardTimings([]);
+      setActiveSentenceIndex(null);
+
       if (err instanceof Error && (err.name === 'AbortError' || err.message === 'Export cancelled')) {
         console.log('Bulk export cancelled by user');
       } else {
         console.error('Bulk export failed:', err);
-        alert('Bulk video rendering failed on the server. Please check that parameters are correct.');
+        alert(err.message || 'Bulk video rendering failed on the server. Please check that parameters are correct.');
       }
       setIsExporting(false);
       setExportProgress(0);
@@ -1471,7 +1610,7 @@ export default function App() {
     } finally {
       abortControllerRef.current = null;
     }
-  }, [exportDuration, videoBackground, bgImageOverlay, uploadedMusicFile]);
+  }, [exportDuration, videoBackground, bgImageOverlay, uploadedMusicFile, voiceOverFile, voiceOverUrl, voiceOverDuration, voiceVolume, activeTab, picTextBulkStories, bulkStories]);
 
   const handleBulkImageDownload = useCallback(async () => {
     const cardElements = document.querySelectorAll('.bulk-poster-card');
@@ -1610,6 +1749,27 @@ export default function App() {
               setIsPlayingVoiceOver(false);
             }
 
+            // Capture base image (no active sentence index) to display for entire duration as fallback/underlay
+            setBulkExportInfo('Capturing base frame...');
+            setActiveSentenceIndex(null);
+            
+            await new Promise((resolve) => setTimeout(resolve, 310));
+            
+            const baseImgDataUrl = await toPng(node, {
+              cacheBust: true,
+              pixelRatio: 1,
+              width: 1080,
+              height: 1920,
+              style: {
+                transform: 'none',
+                transformOrigin: 'top left',
+                width: '1080px',
+                height: '1920px'
+              }
+            });
+            const baseImageBlob = await fetch(baseImgDataUrl).then((r) => r.blob());
+            formData.append('image_base', baseImageBlob, 'frame-base.png');
+
             // Stagger frame snapshotting to allow render synchronization
             for (let i = 0; i < sentenceTimings.length; i++) {
               if (cancelExportRef.current) throw new Error('Export cancelled');
@@ -1617,7 +1777,7 @@ export default function App() {
               setBulkExportInfo(`Capturing sentence frame ${i + 1} of ${sentenceTimings.length}`);
               setActiveSentenceIndex(i);
               
-              await new Promise((resolve) => setTimeout(resolve, 300));
+              await new Promise((resolve) => setTimeout(resolve, 310));
               
               const imgDataUrl = await toPng(node, {
                 cacheBust: true,
@@ -1691,7 +1851,9 @@ export default function App() {
             formData.append('audio', uploadedMusicFile);
           }
 
-          formData.append('duration', exportDuration.toString());
+          const durationValue = (voiceOverUrl && voiceOverDuration > 0) ? voiceOverDuration : exportDuration;
+          formData.append('duration', durationValue.toString());
+          formData.append('voiceVolume', voiceVolume.toString());
 
           const controller = new AbortController();
           abortControllerRef.current = controller;
@@ -1726,38 +1888,38 @@ export default function App() {
 
             for (const line of lines) {
               if (!line.trim()) continue;
+              let data: any = null;
               try {
-                const data = JSON.parse(line);
-                if (data.status === 'rendering') {
-                  setBulkExportInfo(`Processing video: ${Math.round(data.progress)}%`);
-                  setExportProgress(data.progress);
-                } else if (data.status === 'completed') {
-                  setExportProgress(100);
-                  setBulkExportInfo('Completed!');
-                  
-                  const downloadUrl = data.downloadUrl;
-                  const link = document.createElement('a');
-                  link.href = downloadUrl;
-                  link.download = downloadUrl.split('/').pop() || 'story-render.mp4';
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
-
-                  setTimeout(() => {
-                    setIsExporting(false);
-                    setIsExportModalOpen(false);
-                    setExportProgress(0);
-                    setBulkExportInfo('');
-                  }, 800);
-                  return;
-                } else if (data.status === 'error') {
-                  throw new Error(data.error || 'Server rendering process returned an error');
-                }
-              } catch (e: any) {
-                if (e instanceof Error && e.message.includes('Server rendering')) {
-                  throw e;
-                }
+                data = JSON.parse(line);
+              } catch (e) {
                 console.warn('Chunk parsing minor warning:', e);
+                continue;
+              }
+
+              if (data && data.status === 'rendering') {
+                setBulkExportInfo(`Processing video: ${Math.round(data.progress)}%`);
+                setExportProgress(data.progress);
+              } else if (data && data.status === 'completed') {
+                setExportProgress(100);
+                setBulkExportInfo('Completed!');
+                
+                const downloadUrl = data.downloadUrl;
+                const link = document.createElement('a');
+                link.href = downloadUrl;
+                link.download = downloadUrl.split('/').pop() || 'story-render.mp4';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+
+                setTimeout(() => {
+                  setIsExporting(false);
+                  setIsExportModalOpen(false);
+                  setExportProgress(0);
+                  setBulkExportInfo('');
+                }, 800);
+                return;
+              } else if (data && data.status === 'error') {
+                throw new Error(data.error || 'Server rendering process returned an error');
               }
             }
           }
@@ -1993,6 +2155,10 @@ export default function App() {
     activeSentenceIndex,
     voiceOverHighlightColor,
     voiceOverHighlightMode,
+    voiceOverDimInactive,
+    voiceOverPlaybackTime,
+    voiceOverSyncMode,
+    voiceOverDuration,
     isPicTextMode: activeTab === 'pictext'
   };
 
@@ -3622,7 +3788,7 @@ export default function App() {
                   {/* Voice-Over Sync Option */}
                   <div className="pt-4 border-t border-[#2a2d35] space-y-4">
                     <div>
-                      <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block mb-2">Voice-Over Audio</label>
+                      <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block mb-1">Voice-Over Audio</label>
                       <input 
                         type="file" 
                         ref={voiceOverFileInputRef} 
@@ -3633,92 +3799,117 @@ export default function App() {
                       <div className="flex flex-col gap-2">
                         <button 
                           onClick={() => voiceOverFileInputRef.current?.click()}
-                          className={cn(
-                            "w-full flex items-center justify-center gap-2 font-bold py-3 rounded-xl transition-all shadow-lg active:scale-[0.98]",
-                            voiceOverUrl 
-                              ? "bg-emerald-600 hover:bg-emerald-700 text-white" 
-                              : "bg-[#2a2d35] hover:bg-[#353941] text-gray-300 border border-[#353941]"
-                          )}
+                          className="w-full flex items-center justify-center gap-2 font-bold py-3 rounded-xl transition-all shadow-lg active:scale-[0.98] bg-[#5850ec] hover:bg-[#4d45d6] text-white text-xs uppercase"
                         >
-                          <Mic size={16} /> 
-                          {voiceOverUrl ? 'CHANGE VOICE-OVER FILE' : 'ADD VOICE-OVER (MP3/WAV/MP4)'}
+                          <Mic size={14} /> 
+                          {voiceOverUrl ? 'CHANGE VOICE OVER' : 'ADD VOICE OVER'}
                         </button>
                         
                         {voiceOverUrl && (
-                          <div className="flex flex-col gap-2 p-3 bg-[#1e2026] rounded-xl border border-[#2a2d35]">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-bold text-emerald-400">Voice-Over Active</span>
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2 w-full">
+                              <button 
+                                onClick={() => setIsVoiceOverMuted(!isVoiceOverMuted)}
+                                className="flex-1 flex items-center justify-center gap-2 bg-[#1a1d23] hover:bg-[#252830] border border-[#2a2d35] text-[10px] font-bold py-2.5 rounded-lg text-gray-300 uppercase transition-all"
+                                title={isVoiceOverMuted ? "Unmute Voice-over" : "Mute Voice-over"}
+                              >
+                                {isVoiceOverMuted ? (
+                                  <>
+                                    <VolumeX size={14} className="text-red-400" />
+                                    <span>UNMUTE PREVIEW</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Volume2 size={14} className="text-green-400" />
+                                    <span>MUTE PREVIEW</span>
+                                  </>
+                                )}
+                              </button>
+                              
                               <button 
                                 onClick={() => {
                                   setVoiceOverFile(null);
                                   setVoiceOverUrl(null);
                                 }}
-                                className="p-1 hover:bg-red-500/10 text-red-400 rounded transition-all"
+                                className="bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20 p-2.5 rounded-lg transition-all flex items-center justify-center"
                                 title="Remove Voice-over"
                               >
-                                <Trash2 size={12} />
+                                <Trash2 size={14} />
                               </button>
                             </div>
                             
-                            <p className="text-[10px] text-gray-400 font-medium truncate">
-                              {voiceOverFile?.name || 'Voice-Over Audio Stream'}
-                            </p>
-                            
-                            {/* Controls */}
-                            <div className="flex items-center gap-3 bg-[#13151b] p-2 rounded-lg mt-1">
-                              <button 
-                                onClick={toggleVoiceOverPlay}
-                                className="p-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-all"
-                              >
-                                {isPlayingVoiceOver ? <Pause size={14} /> : <Play size={14} />}
-                              </button>
-                              
-                              <div className="flex-1">
-                                <div className="flex justify-between text-[9px] text-gray-500 font-mono mb-0.5">
-                                  <span>{voiceOverPlaybackTime.toFixed(1)}s</span>
-                                  <span>{voiceOverDuration.toFixed(1)}s</span>
-                                </div>
-                                <div className="h-1 bg-gray-700 rounded-full overflow-hidden">
-                                  <div 
-                                    className="h-full bg-blue-500 transition-all duration-100"
-                                    style={{ width: `${voiceOverDuration > 0 ? (voiceOverPlaybackTime / voiceOverDuration) * 100 : 0}%` }}
-                                  />
-                                </div>
-                              </div>
+                            <div className="p-2.5 bg-[#14161b] rounded-lg border border-[#2a2d35] text-left text-[10px] text-gray-400 space-y-1">
+                              <p className="text-indigo-400 font-bold flex items-center gap-1.5 truncate">
+                                <span>🛠️</span> Voice-over Loaded: {voiceOverFile?.name || 'Generated Audio June 01, 2026'}
+                              </p>
+                              <p className="text-[9px] text-gray-500 font-mono">
+                                Decoded PCM Stream • 44.1kHz • Stereo • {Math.round(voiceOverDuration)}s
+                              </p>
                             </div>
                           </div>
                         )}
                       </div>
                     </div>
 
-                    {/* Highlight Styling Controls */}
-                    <div className="space-y-3 pt-2">
-                      <div className="flex justify-between items-center">
-                        <span className="text-xs text-gray-400">Highlight Color</span>
-                        <div className="flex items-center gap-2">
+                    {/* New VOICE-OVER HIGHLIGHT SYNC Controls */}
+                    {voiceOverUrl && (
+                      <div className="space-y-4 pt-1 border-t border-[#2a2d35]/30">
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block mb-1">Voice-Over Highlight Sync</label>
+                        <div className="grid grid-cols-2 gap-2">
+                          {[
+                            { id: 'accumulate', label: 'ACCUMULATE WORDS' },
+                            { id: 'word', label: 'SINGLE WORD' },
+                            { id: 'sentence', label: 'SENTENCE' },
+                            { id: 'none', label: 'NO HIGHLIGHTS' },
+                          ].map((mode) => (
+                            <button
+                              key={mode.id}
+                              onClick={() => setVoiceOverSyncMode(mode.id as any)}
+                              className={cn(
+                                "py-2.5 px-2 text-[10px] font-extrabold rounded-lg tracking-wider transition-all border text-center uppercase",
+                                voiceOverSyncMode === mode.id
+                                  ? "bg-[#3f3c99] border-[#4338ca] text-white shadow-md shadow-indigo-900/20"
+                                  : "bg-[#111318] border-[#2a2d35]/60 text-gray-400 hover:text-gray-200 hover:border-gray-700"
+                              )}
+                            >
+                              {mode.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5 border-t border-[#2a2d35]/30 pt-3">
+                        <div className="flex justify-between items-center text-[10px] font-bold text-gray-500 tracking-wider uppercase">
+                          <span>Sync Highlight Color</span>
+                          <span className="font-mono text-[9px] text-gray-400 font-medium">{voiceOverHighlightColor}</span>
+                        </div>
+                        <div className="flex items-center gap-2 bg-[#111318] p-1.5 rounded-lg border border-[#2a2d35]/50">
                           <input 
                             type="color" 
                             value={voiceOverHighlightColor} 
                             onChange={(e) => setVoiceOverHighlightColor(e.target.value)} 
-                            className="w-6 h-6 border-0 rounded cursor-pointer p-0 bg-transparent"
+                            className="w-10 h-10 border-0 rounded-lg cursor-pointer p-0 bg-transparent shrink-0"
                           />
                           <input 
                             type="text" 
                             value={voiceOverHighlightColor} 
                             onChange={(e) => setVoiceOverHighlightColor(e.target.value)} 
-                            className="w-20 px-1.5 py-0.5 bg-[#1a1d23] border border-[#2a2d35] rounded font-mono text-[10px] text-white text-center"
+                            className="flex-1 bg-transparent border-0 font-mono text-sm text-white focus:ring-0 outline-none px-2 uppercase"
+                            placeholder="#f59e0b"
                           />
                         </div>
                       </div>
 
-                      <div className="flex justify-between items-center">
-                        <span className="text-xs text-gray-400">Highlight Style</span>
-                        <div className="flex bg-[#1a1d23] p-0.5 rounded-lg border border-[#2a2d35]">
+                      {/* Display Settings for Highlight Style and Dimming */}
+                      <div className="flex justify-between items-center text-[10px] border-t border-[#2a2d35]/30 pt-3">
+                        <span className="text-gray-400 font-bold uppercase tracking-wider">Highlight Color Mode</span>
+                        <div className="flex bg-[#111318] p-0.5 rounded border border-[#2a2d35]">
                           <button 
                             onClick={() => setVoiceOverHighlightMode('bg')}
                             className={cn(
-                              "px-2.5 py-1 text-[10px] font-bold rounded-md transition-all",
-                              voiceOverHighlightMode === 'bg' ? "bg-blue-500 text-white" : "text-gray-400 hover:text-white"
+                              "px-2 py-0.5 text-[9px] font-extrabold rounded uppercase tracking-wide",
+                              voiceOverHighlightMode === 'bg' ? "bg-[#3f3c99] text-white" : "text-gray-500 hover:text-white"
                             )}
                           >
                             CONTAINER
@@ -3726,97 +3917,124 @@ export default function App() {
                           <button 
                             onClick={() => setVoiceOverHighlightMode('text')}
                             className={cn(
-                              "px-2.5 py-1 text-[10px] font-bold rounded-md transition-all",
-                              voiceOverHighlightMode === 'text' ? "bg-blue-500 text-white" : "text-gray-400 hover:text-white"
+                              "px-2 py-0.5 text-[9px] font-extrabold rounded uppercase tracking-wide",
+                              voiceOverHighlightMode === 'text' ? "bg-[#3f3c99] text-white" : "text-gray-500 hover:text-white"
                             )}
                           >
                             TEXT SPOT
                           </button>
                         </div>
                       </div>
-                    </div>
 
-                    {/* Interactive Timings Editor */}
-                    {voiceOverUrl && sentenceTimings.length > 0 && (
-                      <div className="space-y-2 mt-4 pt-4 border-t border-[#2a2d35]">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Adjust Offset Timings</span>
-                          <button 
-                            onClick={() => {
-                              const sentences = splitIntoSentences(storyText);
-                              const totalChars = sentences.reduce((acc, s) => acc + s.length, 0);
-                              let elapsed = 0;
-                              const resetTimings = sentences.map((sent, index) => {
-                                const segDur = totalChars > 0 ? (sent.length / totalChars) * voiceOverDuration : voiceOverDuration / sentences.length;
-                                const start = elapsed;
-                                const end = elapsed + segDur;
-                                elapsed = end;
-                                return { index, text: sent, start: Number(start.toFixed(2)), end: Number(end.toFixed(2)) };
-                              });
-                              setSentenceTimings(resetTimings);
-                            }}
-                            className="text-[9px] font-extrabold text-blue-400 hover:underline uppercase"
-                            title="Auto sync based on sentence length"
-                          >
-                            AUTO SYNC
-                          </button>
+                      <div className="flex justify-between items-center text-[10px]">
+                        <span className="text-gray-400 font-bold uppercase tracking-wider">Dim Inactive Text</span>
+                        <button
+                          onClick={() => setVoiceOverDimInactive(!voiceOverDimInactive)}
+                          className={cn(
+                            "px-2.5 py-1 text-[9px] font-extrabold rounded transition-all border uppercase tracking-wide",
+                            voiceOverDimInactive 
+                              ? "bg-indigo-500/10 border-indigo-500/40 text-indigo-400" 
+                              : "bg-[#111318] border-[#2a2d35] text-gray-500 hover:border-gray-700 hover:text-gray-300"
+                          )}
+                        >
+                          {voiceOverDimInactive ? "DIMMED" : "OPAQUE (REF)"}
+                        </button>
+                      </div>
+
+                      {/* LIVE SYNC PREVIEW PLAYER */}
+                      {voiceOverUrl && (
+                        <div className="space-y-2 border-t border-[#2a2d35]/30 pt-3">
+                          <div className="flex justify-between items-center text-[10px] font-bold text-gray-500 tracking-wider">
+                            <span>LIVE SYNC PREVIEW PLAYER</span>
+                            <span className="font-mono text-[9px] text-gray-400 font-medium">
+                              {Math.floor(voiceOverPlaybackTime / 60)}:{(Math.floor(voiceOverPlaybackTime % 60)).toString().padStart(2, '0')} / {Math.floor(voiceOverDuration / 60)}:{(Math.floor(voiceOverDuration % 60)).toString().padStart(2, '0')}
+                            </span>
+                          </div>
+
+                          {/* Progress slider track */}
+                          <div className="relative group pt-1">
+                            <input 
+                              type="range"
+                              min="0"
+                              max={voiceOverDuration || 100}
+                              step="0.05"
+                              value={voiceOverPlaybackTime}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                setVoiceOverPlaybackTime(val);
+                                if (voiceOverAudioRef.current) {
+                                  voiceOverAudioRef.current.currentTime = val;
+                                }
+                              }}
+                              className="w-full h-1 bg-[#1a1d23] outline-none rounded-lg appearance-none cursor-pointer accent-indigo-500 transition-all"
+                              style={{
+                                background: `linear-gradient(to right, #4f46e5 ${voiceOverDuration > 0 ? (voiceOverPlaybackTime / voiceOverDuration) * 100 : 0}%, #1a1d23 0%)`
+                              }}
+                            />
+                          </div>
+
+                          {/* Play / Restart Controls */}
+                          <div className="grid grid-cols-2 gap-2 pt-1">
+                            <button
+                              onClick={toggleVoiceOverPlay}
+                              className="flex items-center justify-center gap-1.5 py-2 px-3 text-[10px] font-extrabold rounded-lg select-none bg-[#4f46e5] text-white hover:bg-indigo-700 transition-all uppercase tracking-wider"
+                            >
+                              {isPlayingVoiceOver ? <Pause size={12} fill="white" /> : <Play size={12} fill="white" />}
+                              <span>{isPlayingVoiceOver ? "PAUSE PREVIEW" : "PLAY PREVIEW"}</span>
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (voiceOverAudioRef.current) {
+                                  voiceOverAudioRef.current.currentTime = 0;
+                                  setVoiceOverPlaybackTime(0);
+                                  if (!isPlayingVoiceOver) {
+                                    voiceOverAudioRef.current.play().catch(() => {});
+                                    setIsPlayingVoiceOver(true);
+                                  }
+                                }
+                              }}
+                              className="flex items-center justify-center gap-1.5 py-2 px-3 text-[10px] font-extrabold rounded-lg select-none bg-[#2a2d35] hover:bg-[#353941] text-gray-300 transition-all uppercase tracking-wider"
+                            >
+                              <RotateCcw size={12} />
+                              <span>RESTART</span>
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* VOLUME MIXER */}
+                      <div className="space-y-1.5 border-t border-[#2a2d35]/30 pt-3">
+                        <div className="flex justify-between items-center text-[10px] font-bold text-gray-500 uppercase tracking-widest">
+                          <span>Volume Mixer</span>
                         </div>
                         
-                        <div className="space-y-3 max-h-60 overflow-y-auto pr-1 bg-[#14161b]/80 p-2.5 rounded-xl border border-[#2a2d35]">
-                          {sentenceTimings.map((t, index) => (
-                            <div key={index} className="p-2 border border-[#2a2d35]/50 bg-[#1a1d23]/50 rounded-lg hover:border-[#353941] hover:bg-[#1a1d23] transition-all">
-                              <div className="flex items-center justify-between mb-1">
-                                <span className={cn(
-                                  "text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide",
-                                  activeSentenceIndex === index ? "bg-blue-800 text-blue-300 animate-pulse" : "bg-gray-800 text-gray-500"
-                                )}>
-                                  Sentence #{index + 1}
-                                </span>
-                              </div>
-                              <p className="text-[10px] text-gray-300 italic mb-2 leading-relaxed font-medium line-clamp-3">
-                                "{t.text}"
-                              </p>
-                              <div className="flex gap-4">
-                                <div className="flex-1 flex items-center gap-1.5">
-                                  <span className="text-[10px] text-gray-500 uppercase tracking-widest">Start:</span>
-                                  <input 
-                                    type="number" 
-                                    step="0.05" 
-                                    value={t.start} 
-                                    onChange={(e) => {
-                                      const val = parseFloat(e.target.value) || 0;
-                                      const updated = [...sentenceTimings];
-                                      updated[index].start = Number(Math.max(0, val).toFixed(2));
-                                      setSentenceTimings(updated);
-                                    }} 
-                                    className="w-full px-1.5 py-0.5 bg-[#252830] border border-[#353941] rounded font-mono text-xs text-white"
-                                  />
-                                  <span className="text-[10px] text-gray-500 font-mono">s</span>
-                                </div>
-                                <div className="flex-1 flex items-center gap-1.5">
-                                  <span className="text-[10px] text-gray-500 uppercase tracking-widest">End:</span>
-                                  <input 
-                                    type="number" 
-                                    step="0.05" 
-                                    value={t.end} 
-                                    onChange={(e) => {
-                                      const val = parseFloat(e.target.value) || 0;
-                                      const updated = [...sentenceTimings];
-                                      updated[index].end = Number(Math.max(0, val).toFixed(2));
-                                      setSentenceTimings(updated);
-                                    }} 
-                                    className="w-full px-1.5 py-0.5 bg-[#252830] border border-[#353941] rounded font-mono text-xs text-white"
-                                  />
-                                  <span className="text-[10px] text-gray-500 font-mono">s</span>
-                                </div>
-                              </div>
-                            </div>
-                          ))}
+                        <div className="space-y-1.5 pt-1">
+                          <div className="flex justify-between items-center text-[10px]">
+                            <span className="text-gray-400 font-medium">Voice Over (Preview & Export)</span>
+                            <span className="text-indigo-400 font-extrabold font-mono">{Math.round(voiceVolume * 100)}%</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="range"
+                              min="0"
+                              max="1"
+                              step="0.01"
+                              value={voiceVolume}
+                              onChange={(e) => setVoiceVolume(parseFloat(e.target.value))}
+                              className="w-full h-1 bg-[#1a1d23] outline-none rounded-lg appearance-none cursor-pointer accent-indigo-500 transition-all"
+                              style={{
+                                background: `linear-gradient(to right, #4f46e5 ${voiceVolume * 100}%, #1a1d23 0%)`
+                              }}
+                            />
+                          </div>
                         </div>
                       </div>
+                    </div>
                     )}
                   </div>
-                </div>
+
+
+                  </div>
               </motion.div>
             )}
 
@@ -4845,6 +5063,13 @@ export default function App() {
                       boxHighlight={story.boxHighlight}
                       boldParagraphIndex={story.boldParagraphIndex !== undefined ? story.boldParagraphIndex : null}
                       innerRef={originalIndex === 0 ? previewRef : null} 
+                      sentenceTimings={currentCaptureCardIdx === originalIndex ? currentCaptureCardTimings : []}
+                      activeSentenceIndex={currentCaptureCardIdx === originalIndex ? activeSentenceIndex : null}
+                      voiceOverHighlightColor={story.highlightColor || voiceOverHighlightColor}
+                      voiceOverHighlightMode={voiceOverHighlightMode}
+                      voiceOverDimInactive={voiceOverDimInactive}
+                      voiceOverSyncMode={voiceOverSyncMode}
+                      voiceOverPlaybackTime={voiceOverPlaybackTime}
                     />
                   </div>
                 </div>
@@ -4886,6 +5111,13 @@ export default function App() {
                       boxHighlight={story.boxHighlight}
                       boldParagraphIndex={story.boldParagraphIndex !== undefined ? story.boldParagraphIndex : null}
                       innerRef={originalIndex === 0 ? previewRef : null} 
+                      sentenceTimings={currentCaptureCardIdx === originalIndex ? currentCaptureCardTimings : []}
+                      activeSentenceIndex={currentCaptureCardIdx === originalIndex ? activeSentenceIndex : null}
+                      voiceOverHighlightColor={story.highlightColor || voiceOverHighlightColor}
+                      voiceOverHighlightMode={voiceOverHighlightMode}
+                      voiceOverDimInactive={voiceOverDimInactive}
+                      voiceOverSyncMode={voiceOverSyncMode}
+                      voiceOverPlaybackTime={voiceOverPlaybackTime}
                     />
                   </div>
                 </div>
@@ -4919,7 +5151,8 @@ function Poster({
   videoBackground, isExporting, boldParagraphIndex,
   storyImage, storyImageHeight, storyImageRadius, storyImageFit, isPicTextMode,
   boxHighlight, imagePosition,
-  sentenceTimings, activeSentenceIndex, voiceOverHighlightColor, voiceOverHighlightMode
+  sentenceTimings, activeSentenceIndex, voiceOverHighlightColor, voiceOverHighlightMode, voiceOverDimInactive,
+  voiceOverPlaybackTime, voiceOverSyncMode, voiceOverDuration
 }: any) {
   const isCardPadded = showCard || !removePaddingWhenHidden;
   const isBlur = scribbleStyle === 'blur' || scribbleStyle === 'title-blur';
@@ -4927,7 +5160,7 @@ function Poster({
   const splitIntoSentences = (text: string): string[] => {
     if (!text) return [];
     const rawSentences = text
-      .split(/(?<=[.!?])\s+/)
+      .split(/(?<=[.!?])(?!\.)\s*/)
       .map(s => s.trim())
       .filter(s => s.length > 0);
     if (rawSentences.length === 0) return [text];
@@ -4937,7 +5170,33 @@ function Poster({
   const renderTimedStoryParagraph = (para: string, paraIndex: number) => {
     if (!para.trim()) return <br />;
 
-    if (!sentenceTimings || sentenceTimings.length === 0) {
+    let effectiveTimings = sentenceTimings;
+    let effectiveActiveIndex = activeSentenceIndex;
+
+    const localSentences = splitIntoSentences(storyText);
+
+    if ((!effectiveTimings || effectiveTimings.length === 0) && storyText && voiceOverPlaybackTime !== undefined && voiceOverDuration > 0 && voiceOverSyncMode !== 'none') {
+      const totalChars = localSentences.reduce((acc, s) => acc + s.length, 0);
+      let elapsed = 0;
+      effectiveTimings = localSentences.map((sent, index) => {
+        const segDur = totalChars > 0 ? (sent.length / totalChars) * voiceOverDuration : voiceOverDuration / localSentences.length;
+        const start = elapsed;
+        const end = elapsed + segDur;
+        elapsed = end;
+        return { index, text: sent, start: Number(start.toFixed(2)), end: Number(end.toFixed(2)) };
+      });
+
+      if (effectiveTimings && effectiveTimings.length > 0) {
+        const activeSeg = effectiveTimings.find(s => voiceOverPlaybackTime >= s.start && voiceOverPlaybackTime <= s.end);
+        if (activeSeg) {
+          effectiveActiveIndex = activeSeg.index;
+        } else {
+          effectiveActiveIndex = null;
+        }
+      }
+    }
+
+    if (!effectiveTimings || effectiveTimings.length === 0) {
       return renderStoryText(para, hColor, boxHighlight);
     }
 
@@ -4949,50 +5208,166 @@ function Poster({
       globalOffset += splitIntoSentences(prevPara).length;
     });
 
+    if (voiceOverSyncMode === 'none') {
+      return (
+        <>
+          {sentences.map((sentence, sIdx) => (
+            <span key={sIdx} className="transition-all duration-300">
+              {renderStoryText(sentence, hColor, boxHighlight)}
+              {sIdx < sentences.length - 1 ? " " : ""}
+            </span>
+          ))}
+        </>
+      );
+    }
+
     return (
       <>
         {sentences.map((sentence, sIdx) => {
           const globalIdx = globalOffset + sIdx;
-          const isActive = activeSentenceIndex === globalIdx;
+          const isActive = effectiveActiveIndex === globalIdx;
+          const isPrevious = effectiveActiveIndex !== null && globalIdx < effectiveActiveIndex;
           
           if (isActive) {
-            if (voiceOverHighlightMode === 'bg') {
+            if (voiceOverSyncMode === 'sentence') {
+              if (voiceOverHighlightMode === 'bg') {
+                return (
+                  <span 
+                    key={sIdx}
+                    style={{ 
+                      backgroundColor: voiceOverHighlightColor, 
+                      color: '#000000',
+                      transition: 'all 0.2s ease'
+                    }} 
+                    className="px-2 py-0.5 rounded mx-1 inline font-extrabold shadow-sm text-black"
+                  >
+                    {renderStoryText(sentence, hColor, boxHighlight)}
+                  </span>
+                );
+              } else {
+                return (
+                  <span 
+                    key={sIdx}
+                    style={{ 
+                      color: voiceOverHighlightColor,
+                      transition: 'color 0.2s ease'
+                    }} 
+                    className="font-extrabold transition-colors duration-200"
+                  >
+                    {renderStoryText(sentence, hColor, boxHighlight)}
+                  </span>
+                );
+              }
+            } else {
+              // Word or Accumulate word-by-word highlight inside the active sentence
+              const words = sentence.split(/(\s+)/);
+              const nonSpaceWords = words.filter(w => w.trim().length > 0);
+              const t = effectiveTimings[globalIdx];
+              const sentenceStart = t ? t.start : 0;
+              const sentenceDur = t ? (t.end - t.start) : 1;
+              const wordDur = nonSpaceWords.length > 0 ? sentenceDur / nonSpaceWords.length : 0;
+              
+              let currentNonSpaceIndex = 0;
+              
               return (
-                <span 
-                  key={sIdx}
-                  style={{ 
-                    backgroundColor: voiceOverHighlightColor, 
-                    color: '#000000',
-                    transition: 'all 0.3s ease'
-                  }} 
-                  className="px-2.5 py-1 rounded-xl mx-1 inline-block font-black shadow-md scale-105 text-black animate-pulse"
-                >
-                  {renderStoryText(sentence, hColor, boxHighlight)}
+                <span key={sIdx}>
+                  {words.map((part, wIdx) => {
+                    const isSpace = part.trim().length === 0;
+                    if (isSpace) return <span key={wIdx}>{part}</span>;
+                    
+                    const wordIdx = currentNonSpaceIndex;
+                    currentNonSpaceIndex++;
+                    
+                    const wordStart = sentenceStart + wordIdx * wordDur;
+                    const wordEnd = sentenceStart + (wordIdx + 1) * wordDur;
+                    const isWordActive = voiceOverPlaybackTime >= wordStart && voiceOverPlaybackTime <= wordEnd;
+                    const isAccumulated = voiceOverSyncMode === 'accumulate' && voiceOverPlaybackTime >= wordStart;
+                    const shouldHighlight = isWordActive || isAccumulated;
+                    
+                    if (shouldHighlight) {
+                      if (voiceOverHighlightMode === 'bg') {
+                        return (
+                          <span 
+                            key={wIdx}
+                            style={{ 
+                              backgroundColor: voiceOverHighlightColor, 
+                              color: '#000000',
+                              transition: 'all 0.15s ease'
+                            }} 
+                            className="px-1 py-0.5 rounded mx-0.5 inline font-extrabold shadow-sm text-black"
+                          >
+                            {renderStoryText(part, hColor, boxHighlight)}
+                          </span>
+                        );
+                      } else {
+                        return (
+                          <span 
+                            key={wIdx}
+                            style={{ 
+                              color: voiceOverHighlightColor,
+                              transition: 'color 0.15s ease'
+                            }} 
+                            className="font-extrabold transition-colors duration-150"
+                          >
+                            {renderStoryText(part, hColor, boxHighlight)}
+                          </span>
+                        );
+                      }
+                    } else {
+                      return (
+                        <span 
+                          key={wIdx} 
+                          className={voiceOverDimInactive ? "opacity-45 transition-all duration-300" : "transition-all duration-300"}
+                        >
+                          {renderStoryText(part, hColor, boxHighlight)}
+                        </span>
+                      );
+                    }
+                  })}
                 </span>
               );
+            }
+          } else {
+            // Inactive sentence: can it be highlighted as accumulated ?
+            const shouldAccumulateSentence = voiceOverSyncMode === 'accumulate' && isPrevious;
+            
+            if (shouldAccumulateSentence) {
+              if (voiceOverHighlightMode === 'bg') {
+                return (
+                  <span 
+                    key={sIdx}
+                    style={{ 
+                      backgroundColor: voiceOverHighlightColor, 
+                      color: '#000000'
+                    }} 
+                    className="px-2 py-0.5 rounded mx-1 inline font-extrabold shadow-sm text-black"
+                  >
+                    {renderStoryText(sentence, hColor, boxHighlight)}
+                  </span>
+                );
+              } else {
+                return (
+                  <span 
+                    key={sIdx}
+                    style={{ 
+                      color: voiceOverHighlightColor
+                    }} 
+                    className="font-extrabold"
+                  >
+                    {renderStoryText(sentence, hColor, boxHighlight)}
+                  </span>
+                );
+              }
             } else {
               return (
                 <span 
                   key={sIdx}
-                  style={{ 
-                    color: voiceOverHighlightColor,
-                    transition: 'all 0.3s ease'
-                  }} 
-                  className="font-black scale-105 underline decoration-wavy decoration-3 select-all transition-all mx-1 inline-block"
+                  className={voiceOverDimInactive ? "opacity-45 transition-all duration-300" : "transition-all duration-300"}
                 >
                   {renderStoryText(sentence, hColor, boxHighlight)}
                 </span>
               );
             }
-          } else {
-            return (
-              <span 
-                key={sIdx}
-                className="opacity-45 transition-all duration-300 mx-0.5"
-              >
-                {renderStoryText(sentence, hColor, boxHighlight)}
-              </span>
-            );
           }
         })}
       </>
