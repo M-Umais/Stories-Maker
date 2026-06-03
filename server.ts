@@ -6,6 +6,21 @@ import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
 import JSZip from 'jszip';
 
+function parseFrameFromLog(logText: string): number | null {
+  const lines = logText.split(/[\r\n]+/);
+  let maxFrame = -1;
+  for (const line of lines) {
+    const match = line.match(/frame=\s*(\d+)/i);
+    if (match) {
+      const frame = parseInt(match[1]);
+      if (!isNaN(frame) && frame > maxFrame) {
+        maxFrame = frame;
+      }
+    }
+  }
+  return maxFrame >= 0 ? maxFrame : null;
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -62,10 +77,13 @@ async function startServer() {
       // Periodic cleanup trigger
       runTemporaryCleanup();
 
-      // Configure SSE-like chunked stream for real-time progress updates
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      res.setHeader('Transfer-Encoding', 'chunked');
-      res.setHeader('X-Content-Type-Options', 'nosniff');
+      // Configure SSE-like chunked stream for real-time progress updates with no buffering
+      res.writeHead(200, {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Transfer-Encoding': 'chunked',
+        'X-Content-Type-Options': 'nosniff',
+        'X-Accel-Buffering': 'no',
+      });
 
       // Extract uploaded files safely
       const uploadedFiles = req.files as Express.Multer.File[] | undefined || [];
@@ -256,14 +274,15 @@ async function startServer() {
         args.push('-an');
       }
 
-      // Universal output profile with fast encoding preset
-      args.push('-c:v', 'libx264', '-preset', 'fast', '-pix_fmt', 'yuv420p');
+      // Universal output profile with ultrafast encoding preset and automatic multi-threading
+      args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-threads', '0', '-pix_fmt', 'yuv420p');
 
       // Constrain duration
       args.push('-t', duration.toString());
 
       // Progress monitoring via stdout
       args.push('-progress', '-');
+      args.push('-nostdin');
 
       // Append final output path
       args.push(outputPath);
@@ -272,9 +291,18 @@ async function startServer() {
 
       // Spawn FFmpeg child process
       let ffmpegProcess: any;
+      
+      const spawnTimeout = setTimeout(() => {
+        if (ffmpegProcess && !ffmpegProcess.killed) {
+          console.error('[FFmpeg Single Render]: Process has exceeded timeout limit. Force terminating...');
+          ffmpegProcess.kill('SIGKILL');
+        }
+      }, 120000); // 2 minute timeout
+
       try {
-        ffmpegProcess = spawn('ffmpeg', args);
+        ffmpegProcess = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
       } catch (spawnError: any) {
+        clearTimeout(spawnTimeout);
         cleanupTempFiles();
         console.error('Failed to spawn FFmpeg process:', spawnError);
         res.write(
@@ -292,18 +320,12 @@ async function startServer() {
 
       ffmpegProcess.stdout.on('data', (data: any) => {
         const text = data.toString();
-        const lines = text.split('\n');
-        for (const line of lines) {
-          if (line.startsWith('frame=')) {
-            const parts = line.split('=');
-            const frameVal = parseInt(parts[1]?.trim());
-            if (!isNaN(frameVal)) {
-              const progress = Math.min(99, Math.round((frameVal / totalFrames) * 100));
-              if (progress > lastProgress) {
-                lastProgress = progress;
-                res.write(JSON.stringify({ status: 'rendering', progress }) + '\n');
-              }
-            }
+        const frameVal = parseFrameFromLog(text);
+        if (frameVal !== null) {
+          const progress = Math.min(99, Math.round((frameVal / totalFrames) * 100));
+          if (progress > lastProgress) {
+            lastProgress = progress;
+            res.write(JSON.stringify({ status: 'rendering', progress }) + '\n');
           }
         }
       });
@@ -312,21 +334,19 @@ async function startServer() {
         const logText = data.toString();
         stderrBuffer += logText;
         console.error('[FFmpeg STDERR]:', logText);
-        // Also a fallback progress scanner in case stdout lacks some frame updates
-        const frameMatch = logText.match(/frame=\s*(\d+)/);
-        if (frameMatch) {
-          const frameVal = parseInt(frameMatch[1]);
-          if (!isNaN(frameVal)) {
-            const progress = Math.min(99, Math.round((frameVal / totalFrames) * 100));
-            if (progress > lastProgress) {
-              lastProgress = progress;
-              res.write(JSON.stringify({ status: 'rendering', progress }) + '\n');
-            }
+        
+        const frameVal = parseFrameFromLog(logText);
+        if (frameVal !== null) {
+          const progress = Math.min(99, Math.round((frameVal / totalFrames) * 100));
+          if (progress > lastProgress) {
+            lastProgress = progress;
+            res.write(JSON.stringify({ status: 'rendering', progress }) + '\n');
           }
         }
       });
 
       ffmpegProcess.on('close', (code: number) => {
+        clearTimeout(spawnTimeout);
         cleanupTempFiles();
         if (code === 0) {
           res.write(
@@ -358,6 +378,7 @@ async function startServer() {
       });
 
       ffmpegProcess.on('error', (err) => {
+        clearTimeout(spawnTimeout);
         cleanupTempFiles();
         console.error('FFmpeg process error:', err);
         res.write(JSON.stringify({ status: 'error', error: `System cannot execute FFmpeg: ${err.message}` }) + '\n');
@@ -375,6 +396,38 @@ async function startServer() {
     }
   );
 
+  // Helper for parallel worker pool execution with concurrency control
+  const TaskQueue = (concurrency: number) => {
+    const queue: (() => Promise<void>)[] = [];
+    let active = 0;
+    const runNext = () => {
+      if (active >= concurrency || queue.length === 0) return;
+      active++;
+      const nextTask = queue.shift();
+      if (nextTask) {
+        nextTask().finally(() => {
+          active--;
+          runNext();
+        });
+      }
+    };
+    return {
+      add: (task: () => Promise<void>) => {
+        return new Promise<void>((resolve, reject) => {
+          queue.push(async () => {
+            try {
+              await task();
+              resolve();
+            } catch (err) {
+              reject(err);
+            }
+          });
+          runNext();
+        });
+      }
+    };
+  };
+
   // Bulk ZIP rendering API route
   app.post(
     '/api/render-bulk-zip',
@@ -382,9 +435,13 @@ async function startServer() {
     async (req, res) => {
       runTemporaryCleanup();
 
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      res.setHeader('Transfer-Encoding', 'chunked');
-      res.setHeader('X-Content-Type-Options', 'nosniff');
+      // Configure SSE-like chunked stream for real-time progress updates with no buffering
+      res.writeHead(200, {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Transfer-Encoding': 'chunked',
+        'X-Content-Type-Options': 'nosniff',
+        'X-Accel-Buffering': 'no',
+      });
 
       const uploadedFiles = req.files as Express.Multer.File[] | undefined || [];
       const videoFile = uploadedFiles.find((f) => f.fieldname === 'video');
@@ -401,7 +458,7 @@ async function startServer() {
       const voiceVolume = parseFloat(req.body.voiceVolume || '1.0') || 1.0;
 
       const activeProcesses: any[] = [];
-      const tempOutputPaths: string[] = [];
+      const tempOutputPaths: string[] = new Array(pageCount).fill('');
 
       const cleanupTempFiles = () => {
         try {
@@ -411,7 +468,7 @@ async function startServer() {
             }
           });
           tempOutputPaths.forEach((pPath) => {
-            if (fs.existsSync(pPath)) {
+            if (pPath && fs.existsSync(pPath)) {
               fs.unlink(pPath, () => {});
             }
           });
@@ -432,220 +489,251 @@ async function startServer() {
 
       try {
         const zip = new JSZip();
+        // Custom TaskQueue with safe concurrency (3 pipelines operating in parallel)
+        const queue = TaskQueue(3);
+        const pageProgresses = new Array(pageCount).fill(0);
+
+        const broadcastProgress = (message?: string) => {
+          const sumProgress = pageProgresses.reduce((sum, val) => sum + val, 0);
+          const overallProgress = Math.floor(sumProgress / pageCount);
+          res.write(JSON.stringify({ 
+            status: 'rendering', 
+            progress: Math.min(99, overallProgress), 
+            message: message || `Rendering bulk export... Progress: ${overallProgress}%` 
+          }) + '\n');
+        };
+
+        const renderPromises: Promise<void>[] = [];
 
         for (let p = 0; p < pageCount; p++) {
-          res.write(JSON.stringify({ status: 'rendering', progress: Math.round((p / pageCount) * 100), message: `Starting rendering page ${p + 1} of ${pageCount}...` }) + '\n');
-
-          const pageImageBase = uploadedFiles.find(f => f.fieldname === `page_${p}_image_base`);
-          
-          const pageImageFilesMap: { [key: string]: Express.Multer.File } = {};
-          uploadedFiles.forEach((file) => {
-            if (file.fieldname.startsWith(`page_${p}_image_`) && file.fieldname !== `page_${p}_image_base`) {
-              const parts = file.fieldname.split('_');
-              const idx = parts[parts.length - 1];
-              pageImageFilesMap[`image_${idx}`] = file;
-            }
-          });
-
-          const timingsStr = req.body[`page_${p}_timings`] || '';
-          let timingsArr: any[] = [];
-          try {
-            if (timingsStr) timingsArr = JSON.parse(timingsStr);
-          } catch (err) {
-            console.error(`Failed to parse timings for page ${p}:`, err);
-          }
-
-          const singleImageFile = uploadedFiles.find((f) => f.fieldname === `page_${p}_image`);
-          if (!pageImageBase && singleImageFile) {
-            pageImageFilesMap['image_0'] = singleImageFile;
-            timingsArr = [{ start: 0, end: duration, index: 0 }];
-          }
-
-          if (Object.keys(pageImageFilesMap).length === 0 && !pageImageBase) {
-            throw new Error(`Page ${p + 1} has no valid base image or overlay screenshots.`);
-          }
-
-          const args: string[] = ['-y'];
-
-          if (videoFile) {
-            args.push('-stream_loop', '-1');
-            args.push('-i', videoFile.path);
-          } else {
-            args.push('-f', 'lavfi', '-i', `color=c=black:s=1080x1920:d=${duration}:r=30`);
-          }
-
-          let currentInputIdx = 1;
-          let baseImageInputIdx = -1;
-          const imageKeysInputIndexes: { [key: string]: number } = {};
-
-          if (pageImageBase) {
-            args.push('-loop', '1');
-            args.push('-i', pageImageBase.path);
-            baseImageInputIdx = currentInputIdx;
-            currentInputIdx++;
-          }
-
-          const imageKeys = Object.keys(pageImageFilesMap).sort((a, b) => {
-            const numA = parseInt(a.replace('image_', '')) || 0;
-            const numB = parseInt(b.replace('image_', '')) || 0;
-            return numA - numB;
-          });
-
-          imageKeys.forEach((key) => {
-            args.push('-loop', '1');
-            args.push('-i', pageImageFilesMap[key].path);
-            imageKeysInputIndexes[key] = currentInputIdx;
-            currentInputIdx++;
-          });
-
-          let audioInputIdx = -1;
-          let voiceInputIdx = -1;
-
-          if (audioFile) {
-            args.push('-i', audioFile.path);
-            audioInputIdx = currentInputIdx;
-            currentInputIdx++;
-          }
-
-          if (voiceOverFile) {
-            args.push('-i', voiceOverFile.path);
-            voiceInputIdx = currentInputIdx;
-            currentInputIdx++;
-          }
-
-          let filterComplex = '';
-
-          if (videoFile) {
-            filterComplex += `[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[bg_pre]; [bg_pre]null[bg]; `;
-          } else {
-            filterComplex += `[0:v]null[bg]; `;
-          }
-
-          let currentLabel = 'bg';
-
-          if (baseImageInputIdx !== -1) {
-            filterComplex += `[${currentLabel}][${baseImageInputIdx}:v]overlay=0:0[bg_with_base]; `;
-            currentLabel = 'bg_with_base';
-          }
-
-          timingsArr.forEach((t: any, idx: number) => {
-            const key = `image_${t.index}`;
-            const inputIdx = imageKeysInputIndexes[key];
-            if (inputIdx !== undefined) {
-              const nextLabel = `v_ol_${idx}`;
-              filterComplex += `[${currentLabel}][${inputIdx}:v]overlay=0:0:enable='between(t,${t.start},${t.end})'[${nextLabel}]; `;
-              currentLabel = nextLabel;
-            }
-          });
-
-          let hasAudio = false;
-          if (audioFile || voiceOverFile) {
-            hasAudio = true;
-            if (audioFile && voiceOverFile) {
-              filterComplex += `[${audioInputIdx}:a]volume=0.15[bg_music]; [${voiceInputIdx}:a]volume=${voiceVolume}[vo_music]; [bg_music][vo_music]amix=inputs=2:duration=longest:dropout_transition=2[mixed_audio]; `;
-            } else if (audioFile) {
-              filterComplex += `[${audioInputIdx}:a]volume=1.0[mixed_audio]; `;
-            } else if (voiceOverFile) {
-              filterComplex += `[${voiceInputIdx}:a]volume=${voiceVolume}[mixed_audio]; `;
-            }
-          }
-
-          const cleanedFilterComplex = filterComplex
-            .split(';')
-            .map((segment) => segment.trim())
-            .filter((segment) => segment.length > 0)
-            .join('; ');
-
-          if (cleanedFilterComplex) {
-            args.push('-filter_complex', cleanedFilterComplex);
-            args.push('-map', `[${currentLabel}]`);
-          } else {
-            args.push('-map', '0:v');
-          }
-
-          if (hasAudio) {
-            args.push('-map', '[mixed_audio]');
-            args.push('-c:a', 'aac', '-b:a', '192k');
-          } else {
-            args.push('-an');
-          }
-
-          args.push('-c:v', 'libx264', '-preset', 'fast', '-pix_fmt', 'yuv420p');
-          args.push('-t', duration.toString());
-
-          const tempOutputPath = path.join(exportsDir, `bulk_page_${p}_${Date.now()}_${Math.floor(Math.random() * 1000)}.mp4`);
-          tempOutputPaths.push(tempOutputPath);
-          args.push(tempOutputPath);
-
-          console.log(`Executing FFmpeg for page ${p} with args:`, args.join(' '));
-
-          await new Promise<void>((resolve, reject) => {
-            let proc: any;
-            try {
-              proc = spawn('ffmpeg', args);
-              activeProcesses.push(proc);
-            } catch (err) {
-              return reject(err);
-            }
-
-            let lastPageProgress = 0;
-            const totalFrames = duration * 30;
-
-            proc.stdout.on('data', (data: any) => {
-              const text = data.toString();
-              const lines = text.split('\n');
-              for (const line of lines) {
-                if (line.startsWith('frame=')) {
-                  const parts = line.split('=');
-                  const frameVal = parseInt(parts[1]?.trim());
-                  if (!isNaN(frameVal)) {
-                    const pageProgress = Math.min(99, Math.round((frameVal / totalFrames) * 100));
-                    if (pageProgress > lastPageProgress) {
-                      lastPageProgress = pageProgress;
-                      const overallProgress = Math.floor(((p + (pageProgress / 100)) / pageCount) * 100);
-                      res.write(JSON.stringify({ status: 'rendering', progress: overallProgress, message: `Rendering page ${p + 1} of ${pageCount}: ${pageProgress}%` }) + '\n');
-                    }
-                  }
-                }
+          const renderTask = async () => {
+            const pageImageBase = uploadedFiles.find(f => f.fieldname === `page_${p}_image_base`);
+            
+            const pageImageFilesMap: { [key: string]: Express.Multer.File } = {};
+            uploadedFiles.forEach((file) => {
+              if (file.fieldname.startsWith(`page_${p}_image_`) && file.fieldname !== `page_${p}_image_base`) {
+                const parts = file.fieldname.split('_');
+                const idx = parts[parts.length - 1];
+                pageImageFilesMap[`image_${idx}`] = file;
               }
             });
 
-            proc.stderr.on('data', (data: any) => {
-              const logText = data.toString();
-              const frameMatch = logText.match(/frame=\s*(\d+)/);
-              if (frameMatch) {
-                const frameVal = parseInt(frameMatch[1]);
-                if (!isNaN(frameVal)) {
+            const timingsStr = req.body[`page_${p}_timings`] || '';
+            let timingsArr: any[] = [];
+            try {
+              if (timingsStr) timingsArr = JSON.parse(timingsStr);
+            } catch (err) {
+              console.error(`Failed to parse timings for page ${p}:`, err);
+            }
+
+            const singleImageFile = uploadedFiles.find((f) => f.fieldname === `page_${p}_image`);
+            if (!pageImageBase && singleImageFile) {
+              pageImageFilesMap['image_0'] = singleImageFile;
+              timingsArr = [{ start: 0, end: duration, index: 0 }];
+            }
+
+            if (Object.keys(pageImageFilesMap).length === 0 && !pageImageBase) {
+              throw new Error(`Page ${p + 1} has no valid base image or overlay screenshots.`);
+            }
+
+            const args: string[] = ['-y'];
+
+            if (videoFile) {
+              args.push('-stream_loop', '-1');
+              args.push('-i', videoFile.path);
+            } else {
+              args.push('-f', 'lavfi', '-i', `color=c=black:s=1080x1920:d=${duration}:r=30`);
+            }
+
+            let currentInputIdx = 1;
+            let baseImageInputIdx = -1;
+            const imageKeysInputIndexes: { [key: string]: number } = {};
+
+            if (pageImageBase) {
+              args.push('-loop', '1');
+              args.push('-i', pageImageBase.path);
+              baseImageInputIdx = currentInputIdx;
+              currentInputIdx++;
+            }
+
+            const imageKeys = Object.keys(pageImageFilesMap).sort((a, b) => {
+              const numA = parseInt(a.replace('image_', '')) || 0;
+              const numB = parseInt(b.replace('image_', '')) || 0;
+              return numA - numB;
+            });
+
+            imageKeys.forEach((key) => {
+              args.push('-loop', '1');
+              args.push('-i', pageImageFilesMap[key].path);
+              imageKeysInputIndexes[key] = currentInputIdx;
+              currentInputIdx++;
+            });
+
+            let audioInputIdx = -1;
+            let voiceInputIdx = -1;
+
+            if (audioFile) {
+              args.push('-i', audioFile.path);
+              audioInputIdx = currentInputIdx;
+              currentInputIdx++;
+            }
+
+            if (voiceOverFile) {
+              args.push('-i', voiceOverFile.path);
+              voiceInputIdx = currentInputIdx;
+              currentInputIdx++;
+            }
+
+            let filterComplex = '';
+
+            if (videoFile) {
+              filterComplex += `[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[bg_pre]; [bg_pre]null[bg]; `;
+            } else {
+              filterComplex += `[0:v]null[bg]; `;
+            }
+
+            let currentLabel = 'bg';
+
+            if (baseImageInputIdx !== -1) {
+              filterComplex += `[${currentLabel}][${baseImageInputIdx}:v]overlay=0:0[bg_with_base]; `;
+              currentLabel = 'bg_with_base';
+            }
+
+            timingsArr.forEach((t: any, idx: number) => {
+              const key = `image_${t.index}`;
+              const inputIdx = imageKeysInputIndexes[key];
+              if (inputIdx !== undefined) {
+                const nextLabel = `v_ol_${idx}`;
+                filterComplex += `[${currentLabel}][${inputIdx}:v]overlay=0:0:enable='between(t,${t.start},${t.end})'[${nextLabel}]; `;
+                currentLabel = nextLabel;
+              }
+            });
+
+            let hasAudio = false;
+            if (audioFile || voiceOverFile) {
+              hasAudio = true;
+              if (audioFile && voiceOverFile) {
+                filterComplex += `[${audioInputIdx}:a]volume=0.15[bg_music]; [${voiceInputIdx}:a]volume=${voiceVolume}[vo_music]; [bg_music][vo_music]amix=inputs=2:duration=longest:dropout_transition=2[mixed_audio]; `;
+              } else if (audioFile) {
+                filterComplex += `[${audioInputIdx}:a]volume=1.0[mixed_audio]; `;
+              } else if (voiceOverFile) {
+                filterComplex += `[${voiceInputIdx}:a]volume=${voiceVolume}[mixed_audio]; `;
+              }
+            }
+
+            const cleanedFilterComplex = filterComplex
+              .split(';')
+              .map((segment) => segment.trim())
+              .filter((segment) => segment.length > 0)
+              .join('; ');
+
+            if (cleanedFilterComplex) {
+              args.push('-filter_complex', cleanedFilterComplex);
+              args.push('-map', `[${currentLabel}]`);
+            } else {
+              args.push('-map', '0:v');
+            }
+
+            if (hasAudio) {
+              args.push('-map', '[mixed_audio]');
+              args.push('-c:a', 'aac', '-b:a', '192k');
+            } else {
+              args.push('-an');
+            }
+
+            // High performance: preset ultrafast, auto multi-threading
+            args.push('-progress', '-');
+            args.push('-nostdin');
+            args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-threads', '0', '-pix_fmt', 'yuv420p');
+            args.push('-t', duration.toString());
+
+            const tempOutputPath = path.join(exportsDir, `bulk_page_${p}_${Date.now()}_${Math.floor(Math.random() * 1000)}.mp4`);
+            tempOutputPaths[p] = tempOutputPath;
+            args.push(tempOutputPath);
+
+            console.log(`Executing FFmpeg for page ${p} with args:`, args.join(' '));
+
+            await new Promise<void>((resolve, reject) => {
+              let proc: any;
+              
+              const pageTimeout = setTimeout(() => {
+                if (proc && !proc.killed) {
+                  console.error(`[FFmpeg Bulk Page ${p+1}]: Process has exceeded timeout limit. Force terminating...`);
+                  proc.kill('SIGKILL');
+                }
+              }, 120000); // 2 minute timeout
+
+              try {
+                proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+                activeProcesses.push(proc);
+              } catch (err) {
+                clearTimeout(pageTimeout);
+                return reject(err);
+              }
+
+              let lastPageProgress = 0;
+              const totalFrames = duration * 30;
+
+              proc.stdout.on('data', (data: any) => {
+                const text = data.toString();
+                const frameVal = parseFrameFromLog(text);
+                if (frameVal !== null) {
                   const pageProgress = Math.min(99, Math.round((frameVal / totalFrames) * 100));
                   if (pageProgress > lastPageProgress) {
                     lastPageProgress = pageProgress;
-                    const overallProgress = Math.floor(((p + (pageProgress / 100)) / pageCount) * 100);
-                    res.write(JSON.stringify({ status: 'rendering', progress: overallProgress, message: `Rendering page ${p + 1} of ${pageCount}: ${pageProgress}%` }) + '\n');
+                    pageProgresses[p] = pageProgress;
+                    broadcastProgress(`Page ${p+1}/${pageCount} progress: ${pageProgress}%`);
                   }
                 }
-              }
+              });
+
+              proc.stderr.on('data', (data: any) => {
+                const logText = data.toString();
+                const frameVal = parseFrameFromLog(logText);
+                if (frameVal !== null) {
+                  const pageProgress = Math.min(99, Math.round((frameVal / totalFrames) * 100));
+                  if (pageProgress > lastPageProgress) {
+                    lastPageProgress = pageProgress;
+                    pageProgresses[p] = pageProgress;
+                    broadcastProgress(`Page ${p+1}/${pageCount} progress: ${pageProgress}%`);
+                  }
+                }
+              });
+
+              proc.on('close', (code: number) => {
+                clearTimeout(pageTimeout);
+                const idx = activeProcesses.indexOf(proc);
+                if (idx !== -1) activeProcesses.splice(idx, 1);
+
+                if (code === 0) {
+                  pageProgresses[p] = 100;
+                  broadcastProgress(`Page ${p+1}/${pageCount} complete!`);
+                  resolve();
+                } else {
+                  reject(new Error(`FFmpeg exited with non-zero code ${code} rendering page ${p + 1}`));
+                }
+              });
+
+              proc.on('error', (err: any) => {
+                clearTimeout(pageTimeout);
+                const idx = activeProcesses.indexOf(proc);
+                if (idx !== -1) activeProcesses.splice(idx, 1);
+                reject(err);
+              });
             });
+          };
 
-            proc.on('close', (code: number) => {
-              const idx = activeProcesses.indexOf(proc);
-              if (idx !== -1) activeProcesses.splice(idx, 1);
+          renderPromises.push(queue.add(renderTask));
+        }
 
-              if (code === 0) {
-                resolve();
-              } else {
-                reject(new Error(`FFmpeg exited with non-zero code ${code} rendering page ${p + 1}`));
-              }
-            });
+        // Run rendering concurrently bounded by TaskQueue
+        await Promise.all(renderPromises);
 
-            proc.on('error', (err: any) => {
-              const idx = activeProcesses.indexOf(proc);
-              if (idx !== -1) activeProcesses.splice(idx, 1);
-              reject(err);
-            });
-          });
-
-          // Read the compiled mp4 on server and insert to ZIP
-          if (fs.existsSync(tempOutputPath)) {
+        // All videos rendered successfully! Now gather files and zip
+        broadcastProgress('Merging page outputs into final download ZIP...');
+        for (let p = 0; p < pageCount; p++) {
+          const tempOutputPath = tempOutputPaths[p];
+          if (tempOutputPath && fs.existsSync(tempOutputPath)) {
             const fileBuffer = fs.readFileSync(tempOutputPath);
             zip.file(`story-page-${p + 1}.mp4`, fileBuffer);
           } else {

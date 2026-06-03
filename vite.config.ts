@@ -13,10 +13,18 @@ export default defineConfig(({mode}) => {
       },
     },
     server: {
-      // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
-      hmr: process.env.DISABLE_HMR !== 'true',
-      // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
+      // Safe HMR configuration:
+      // 1. If DISABLE_HMR is set to true (standard in AI Studio to prevent unnecessary browser flickering during active coding),
+      //    we completely disable HMR to prevent repeated WebSocket connection attempts and error noise.
+      // 2. If HMR is enabled and running in the Cloud Run hosted environment, configure secure WebSockets (wss) over port 443.
+      // 3. Otherwise, fall back to standard local HMR options.
+      hmr: process.env.DISABLE_HMR === 'true'
+        ? false
+        : (process.env.K_SERVICE
+            ? { protocol: 'wss', clientPort: 443 }
+            : true
+          ),
+      // Disable file watching when DISABLE_HMR is true to save CPU and RAM during edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
   };

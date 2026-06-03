@@ -25,7 +25,8 @@ import {
   FileImage,
   Music,
   Volume2,
-  VolumeX
+  VolumeX,
+  CheckCircle2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toPng, toCanvas } from 'html-to-image';
@@ -144,6 +145,9 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [bulkExportInfo, setBulkExportInfo] = useState('');
+  const [exportEta, setExportEta] = useState<string>('');
+  const [renderedFileInfo, setRenderedFileInfo] = useState<{ downloadUrl: string; type: string } | null>(null);
+  const exportStartTimeRef = useRef<number | null>(null);
 
   const cancelExportRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -157,6 +161,8 @@ export default function App() {
     setIsExporting(false);
     setExportProgress(0);
     setBulkExportInfo('');
+    setExportEta('');
+    setRenderedFileInfo(null);
     setIsExportModalOpen(false);
   }, []);
 
@@ -1371,6 +1377,9 @@ export default function App() {
     setIsExporting(true);
     setExportProgress(0);
     setBulkExportInfo(`Initializing bulk server-side export...`);
+    setExportEta('Calculating...');
+    setRenderedFileInfo(null);
+    exportStartTimeRef.current = Date.now();
 
     try {
       const formData = new FormData();
@@ -1560,9 +1569,20 @@ export default function App() {
           try {
             const data = JSON.parse(line);
             if (data.status === 'rendering') {
-              setExportProgress(data.progress || 0);
-              if (data.message) {
-                setBulkExportInfo(data.message);
+              const progress = data.progress || 0;
+              setExportProgress(progress);
+              
+              const elapsedMs = Date.now() - (exportStartTimeRef.current || Date.now());
+              if (progress > 2 && elapsedMs > 500) {
+                const totalEstMs = (elapsedMs / progress) * 100;
+                const remainingMs = Math.max(0, totalEstMs - elapsedMs);
+                const remainingSecStr = (remainingMs / 1000).toFixed(0);
+                setExportEta(`ETA: ${remainingSecStr}s remaining`);
+                const msg = data.message || `Rendering bulk export... Progress: ${progress}%`;
+                setBulkExportInfo(`${msg} (ETA: ${remainingSecStr}s)`);
+              } else {
+                setExportEta('ETA: Calculating...');
+                setBulkExportInfo(data.message || `Rendering bulk export... Progress: ${progress}%`);
               }
             } else if (data.status === 'completed') {
               finalDownloadUrl = data.downloadUrl;
@@ -1582,16 +1602,22 @@ export default function App() {
         throw new Error('Render completed but no download ZIP url was returned by server');
       }
 
-      setBulkExportInfo('Downloading generated ZIP file...');
-      const link = document.createElement('a');
-      link.href = finalDownloadUrl;
-      link.download = `bulk-stories-${Date.now()}.zip`;
-      link.click();
-
+      setExportProgress(100);
+      setBulkExportInfo('Completed!');
+      setExportEta('');
+      setRenderedFileInfo({ downloadUrl: finalDownloadUrl, type: 'zip' });
       setIsExporting(false);
-      setExportProgress(0);
-      setBulkExportInfo('');
-      setIsExportModalOpen(false);
+
+      try {
+        const link = document.createElement('a');
+        link.href = finalDownloadUrl;
+        link.download = `bulk-stories-${Date.now()}.zip`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } catch (e) {
+        console.error("Auto-download triggered but was blocked:", e);
+      }
 
     } catch (err: any) {
       setCurrentCaptureCardIdx(null);
@@ -1620,6 +1646,9 @@ export default function App() {
     setIsExporting(true);
     setExportProgress(0);
     setBulkExportInfo(`Initializing bulk image export...`);
+    setExportEta('Calculating...');
+    setRenderedFileInfo(null);
+    exportStartTimeRef.current = Date.now();
 
     // Dynamically import jszip inside the handler to keep initial bundle size smaller
     const JSZip = (await import('jszip')).default;
@@ -1663,15 +1692,23 @@ export default function App() {
       setBulkExportInfo('Generating ZIP file...');
       const zipBlob = await zip.generateAsync({ type: 'blob' });
       const url = URL.createObjectURL(zipBlob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `bulk-images-${Date.now()}.zip`;
-      link.click();
-
+      
+      setExportProgress(100);
+      setBulkExportInfo('Completed!');
+      setExportEta('');
+      setRenderedFileInfo({ downloadUrl: url, type: 'zip' });
       setIsExporting(false);
-      setExportProgress(0);
-      setBulkExportInfo('');
-      setIsExportModalOpen(false);
+
+      try {
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `bulk-images-${Date.now()}.zip`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } catch (e) {
+        console.error("Auto-download triggered but was blocked:", e);
+      }
     } catch (err: any) {
       if (err instanceof Error && err.message === 'Export cancelled') {
         console.log('Bulk image export cancelled by user');
@@ -1730,6 +1767,9 @@ export default function App() {
       // Server-Side Video Export (FFmpeg on the Server)
       setExportProgress(0);
       setBulkExportInfo('Initializing...');
+      setExportEta('Calculating...');
+      setRenderedFileInfo(null);
+      exportStartTimeRef.current = Date.now();
       
       setTimeout(async () => {
         if (cancelExportRef.current) return;
@@ -1897,26 +1937,38 @@ export default function App() {
               }
 
               if (data && data.status === 'rendering') {
-                setBulkExportInfo(`Processing video: ${Math.round(data.progress)}%`);
-                setExportProgress(data.progress);
+                const progress = data.progress;
+                setExportProgress(progress);
+                const elapsedMs = Date.now() - (exportStartTimeRef.current || Date.now());
+                if (progress > 2 && elapsedMs > 500) {
+                  const totalEstMs = (elapsedMs / progress) * 100;
+                  const remainingMs = Math.max(0, totalEstMs - elapsedMs);
+                  const remainingSecStr = (remainingMs / 1000).toFixed(0);
+                  setExportEta(`ETA: ${remainingSecStr}s remaining`);
+                  setBulkExportInfo(`Processing video: ${Math.round(progress)}% (ETA: ${remainingSecStr}s)`);
+                } else {
+                  setExportEta('ETA: Calculating...');
+                  setBulkExportInfo(`Processing video: ${Math.round(progress)}%`);
+                }
               } else if (data && data.status === 'completed') {
                 setExportProgress(100);
                 setBulkExportInfo('Completed!');
+                setExportEta('');
                 
                 const downloadUrl = data.downloadUrl;
-                const link = document.createElement('a');
-                link.href = downloadUrl;
-                link.download = downloadUrl.split('/').pop() || 'story-render.mp4';
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
+                setRenderedFileInfo({ downloadUrl, type: 'video' });
+                setIsExporting(false);
 
-                setTimeout(() => {
-                  setIsExporting(false);
-                  setIsExportModalOpen(false);
-                  setExportProgress(0);
-                  setBulkExportInfo('');
-                }, 800);
+                try {
+                  const link = document.createElement('a');
+                  link.href = downloadUrl;
+                  link.download = downloadUrl.split('/').pop() || 'story-render.mp4';
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+                } catch (e) {
+                  console.error("Auto-download triggered but was blocked:", e);
+                }
                 return;
               } else if (data && data.status === 'error') {
                 throw new Error(data.error || 'Server rendering process returned an error');
@@ -2286,6 +2338,90 @@ export default function App() {
                 </button>
               </div>
 
+              {renderedFileInfo ? (
+                <div className="p-6 text-center space-y-6">
+                  <div className="flex flex-col items-center justify-center space-y-3">
+                    <div className="w-16 h-16 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center shadow-lg shadow-emerald-500/5 animate-pulse">
+                      <CheckCircle2 size={36} />
+                    </div>
+                    <h3 className="text-xl font-bold text-white">Rendering Complete!</h3>
+                    <p className="text-sm text-gray-400 leading-normal max-w-xs mx-auto">
+                      Your high-quality file has been successfully generated and is ready to save.
+                    </p>
+                  </div>
+
+                  <div className="bg-[#1c2229] border border-[#2a2d35] rounded-xl p-4 flex flex-col gap-2.5">
+                    <div className="flex justify-between items-center text-xs font-mono">
+                      <span className="text-gray-500">FORMAT</span>
+                      <span className="text-blue-400 font-bold uppercase">{renderedFileInfo.type === 'zip' ? 'ZIP Archive' : 'MP4 Video'}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-xs font-mono">
+                      <span className="text-gray-500">FILE TYPE</span>
+                      <span className="text-gray-300 font-medium">{renderedFileInfo.type === 'zip' ? '.zip' : '.mp4'}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-3">
+                    <a 
+                      href={renderedFileInfo.downloadUrl}
+                      download={renderedFileInfo.type === 'zip' ? `stories-export-${Date.now()}.zip` : `story-render-${Date.now()}.mp4`}
+                      className="w-full flex items-center justify-center gap-2 bg-emerald-400 hover:bg-emerald-300 text-black font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98]"
+                    >
+                      <Download size={18} /> Direct Save / Download
+                    </a>
+
+                    <button 
+                      onClick={() => {
+                        setRenderedFileInfo(null);
+                        setExportProgress(0);
+                        setBulkExportInfo('');
+                        setExportEta('');
+                      }}
+                      className="w-full py-2.5 text-xs text-blue-400 hover:text-blue-300 font-semibold border border-blue-500/20 hover:border-blue-500/40 rounded-xl bg-[#1c2229] transition-colors"
+                    >
+                      Export Different Format
+                    </button>
+                  </div>
+                </div>
+              ) : isExporting ? (
+                <div className="p-6 space-y-6">
+                  <div className="text-center space-y-2">
+                    <h3 className="text-xl font-bold flex items-center justify-center gap-2">
+                      <Loader2 size={24} className="text-blue-400 animate-spin" />
+                      Rendering Video
+                    </h3>
+                    <p className="text-sm text-gray-400">Please keep this window open while we process your elements.</p>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center text-xs font-semibold">
+                      <span className="text-gray-400 truncate max-w-[200px]">{bulkExportInfo || 'Processing...'}</span>
+                      <span className="text-blue-400 font-mono text-sm">{exportProgress}%</span>
+                    </div>
+
+                    <div className="w-full h-2.5 bg-[#2a2d35] rounded-full overflow-hidden relative">
+                      <motion.div 
+                        initial={{ width: 0 }}
+                        animate={{ width: `${exportProgress}%` }}
+                        transition={{ duration: 0.1 }}
+                        className="absolute h-full left-0 top-0 bg-blue-500 rounded-full"
+                      />
+                    </div>
+
+                    <div className="flex justify-between text-[11px] text-gray-500 font-medium">
+                      <span>{exportEta || 'Estimating time remaining...'}</span>
+                      <span>1080 x 1920 Full HD</span>
+                    </div>
+                  </div>
+
+                  <button 
+                    onClick={handleCancelExport}
+                    className="w-full flex items-center justify-center gap-2 bg-red-600 hover:bg-red-500 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98]"
+                  >
+                    <X size={18} /> Cancel Download
+                  </button>
+                </div>
+              ) : (
                 <div className="p-6 space-y-6">
                   <div>
                     <h3 className="text-xl font-bold mb-1">Export Story</h3>
@@ -2335,8 +2471,8 @@ export default function App() {
                             )}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <h4 className="font-bold text-purple-400 text-sm">Bulk Download Video (ZIP)</h4>
-                            <p className="text-[11px] text-gray-500 leading-tight mt-0.5">Render all {activeTab === 'pictext' ? picTextBulkStories.filter(s => s.text.trim().length > 0 || s.image).length : bulkStories.filter(s => s.text.trim().length > 0).length} stories into a ZIP</p>
+                            <h4 className="font-bold text-purple-400 text-sm">Bulk Video ZIP</h4>
+                            <p className="text-[11px] text-gray-500 leading-tight mt-0.5">Render all {activeTab === 'pictext' ? picTextBulkStories.filter(s => s.text.trim().length > 0 || s.image).length : bulkStories.filter(s => s.text.trim().length > 0).length} stories into high quality MP4 ZIP archive</p>
                             {isExporting && bulkExportInfo && !bulkExportInfo.toLowerCase().includes('image') && (
                               <p className="text-[10px] text-purple-400 font-bold uppercase tracking-widest mt-1.5">{bulkExportInfo} · {exportProgress}%</p>
                             )}
@@ -2368,8 +2504,8 @@ export default function App() {
                             )}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <h4 className="font-bold text-emerald-400 text-sm">Bulk Download Images (ZIP)</h4>
-                            <p className="text-[11px] text-gray-500 leading-tight mt-0.5">Render all {activeTab === 'pictext' ? picTextBulkStories.filter(s => s.text.trim().length > 0 || s.image).length : bulkStories.filter(s => s.text.trim().length > 0).length} pages as high-quality PNG ZIP</p>
+                            <h4 className="font-bold text-emerald-400 text-sm">Bulk Images ZIP</h4>
+                            <p className="text-[11px] text-gray-500 leading-tight mt-0.5">Render all {activeTab === 'pictext' ? picTextBulkStories.filter(s => s.text.trim().length > 0 || s.image).length : bulkStories.filter(s => s.text.trim().length > 0).length} pages as sharp PNG ZIP archive</p>
                             {isExporting && bulkExportInfo && bulkExportInfo.toLowerCase().includes('image') && (
                               <p className="text-[10px] text-emerald-400 font-bold uppercase tracking-widest mt-1.5">{bulkExportInfo} · {exportProgress}%</p>
                             )}
@@ -2381,66 +2517,49 @@ export default function App() {
 
                   {/* Video Option */}
                   <div 
-                    onClick={() => !isExporting && handleDownload('video')}
                     className={cn(
-                      "p-4 rounded-xl border relative overflow-hidden",
-                      isExporting ? "border-blue-500/50 bg-[#1c2229]" : "border-[#3b82f6]/40 bg-[#1c2229] ring-2 ring-blue-500/10 cursor-pointer hover:bg-[#252c36] group transition-all"
+                      "p-4 rounded-xl border relative overflow-hidden text-left border-[#3b82f6]/40 bg-[#1c2229]"
                     )}
                   >
-                    {isExporting && (
-                      <motion.div 
-                        initial={{ width: 0 }}
-                        animate={{ width: `${exportProgress}%` }}
-                        className="absolute bottom-0 left-0 h-1 bg-blue-500 transition-all duration-300"
-                      />
-                    )}
                     <div className="flex items-center gap-4 mb-4">
-                      <div className="w-12 h-12 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center group-hover:bg-blue-500/20">
-                        {isExporting ? <Loader2 size={24} className="text-blue-400 animate-spin" /> : <Film size={24} className="text-blue-400" />}
+                      <div className="w-12 h-12 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
+                        <Film size={24} className="text-blue-400" />
                       </div>
                       <div className="flex-1">
-                        <h4 className="font-bold">Video (silent · same image)</h4>
-                        {isExporting && <p className="text-[10px] text-blue-400 font-bold uppercase tracking-widest mt-0.5">Recording... {exportProgress}%</p>}
+                        <h4 className="font-bold">Render & Export Video</h4>
+                        <p className="text-xs text-gray-500 leading-tight mt-0.5">Compile current active layout overlay sequence with optional video backing and custom timings</p>
                       </div>
                     </div>
 
-                    <div className="space-y-4" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex justify-between items-center text-xs font-medium">
-                      <span className="text-gray-400">Duration</span>
-                      <span className="text-blue-400 font-mono">{exportDuration}s</span>
-                    </div>
-                    <input 
-                      type="range" 
-                      min="5" 
-                      max="90" 
-                      value={exportDuration} 
-                      onChange={(e) => setExportDuration(parseInt(e.target.value))}
-                      disabled={isExporting}
-                      className="w-full accent-blue-500" 
-                    />
-                    <div className="flex justify-between text-[10px] text-gray-500 font-medium">
-                      <span>5s</span>
-                      <span>1m 30s</span>
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center text-xs font-medium">
+                        <span className="text-gray-400">Manual Video Duration Limit</span>
+                        <span className="text-blue-400 font-mono">{exportDuration}s</span>
+                      </div>
+                      <input 
+                        type="range" 
+                        min="5" 
+                        max="90" 
+                        value={exportDuration} 
+                        onChange={(e) => setExportDuration(parseInt(e.target.value))}
+                        disabled={isExporting}
+                        className="w-full accent-blue-500 cursor-pointer" 
+                      />
+                      <div className="flex justify-between text-[10px] text-gray-500 font-medium">
+                        <span>5s</span>
+                        <span>1m 30s</span>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                {isExporting ? (
-                  <button 
-                    onClick={handleCancelExport}
-                    className="w-full flex items-center justify-center gap-2 bg-red-600 hover:bg-red-500 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98]"
-                  >
-                    <X size={18} /> Cancel Download
-                  </button>
-                ) : (
                   <button 
                     onClick={() => handleDownload('video')}
                     className="w-full flex items-center justify-center gap-2 bg-[#8ab4f8] hover:bg-[#a1c2fa] text-black font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98]"
                   >
                     <Download size={18} /> Export Video
                   </button>
-                )}
-              </div>
+                </div>
+              )}
             </motion.div>
           </div>
         )}
