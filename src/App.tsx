@@ -25,11 +25,10 @@ import {
   FileImage,
   Music,
   Volume2,
-  VolumeX,
-  CheckCircle2
+  VolumeX
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { toPng, toCanvas } from 'html-to-image';
+import { toPng, toJpeg, toCanvas } from 'html-to-image';
 import { cn } from './lib/utils';
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import { TEMPLATE_PRESETS, TemplatePreset } from './constants';
@@ -141,13 +140,11 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('profile');
   const [selectedPresetId, setSelectedPresetId] = useState(TEMPLATE_PRESETS[1].id);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [exportType, setExportType] = useState<'single_image' | 'single_video' | 'bulk_image' | 'bulk_video'>('single_video');
   const [exportDuration, setExportDuration] = useState(31);
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [bulkExportInfo, setBulkExportInfo] = useState('');
-  const [exportEta, setExportEta] = useState<string>('');
-  const [renderedFileInfo, setRenderedFileInfo] = useState<{ downloadUrl: string; type: string } | null>(null);
-  const exportStartTimeRef = useRef<number | null>(null);
 
   const cancelExportRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -161,8 +158,6 @@ export default function App() {
     setIsExporting(false);
     setExportProgress(0);
     setBulkExportInfo('');
-    setExportEta('');
-    setRenderedFileInfo(null);
     setIsExportModalOpen(false);
   }, []);
 
@@ -878,6 +873,16 @@ export default function App() {
     }
   }, [isVoiceOverMuted]);
 
+  useEffect(() => {
+    if (isExportModalOpen) {
+      if (isBulkMode || (activeTab === 'pictext' && isPicTextBulk)) {
+        setExportType('bulk_video');
+      } else {
+        setExportType('single_video');
+      }
+    }
+  }, [isExportModalOpen, isBulkMode, isPicTextBulk, activeTab]);
+
   const sentenceTimingsRef = useRef<any[]>([]);
   useEffect(() => {
     sentenceTimingsRef.current = sentenceTimings;
@@ -1376,21 +1381,20 @@ export default function App() {
     cancelExportRef.current = false;
     setIsExporting(true);
     setExportProgress(0);
-    setBulkExportInfo(`Initializing bulk server-side export...`);
-    setExportEta('Calculating...');
-    setRenderedFileInfo(null);
-    exportStartTimeRef.current = Date.now();
+    setBulkExportInfo(`Initializing bulk sequential export...`);
 
     try {
-      const formData = new FormData();
+      const JSZip = (await import('jszip')).default;
+      const zip = new JSZip();
       const total = cardElements.length;
-      formData.append('page_count', total.toString());
 
-      // Let's determine page duration
+      // Determine page duration
       const pageDuration = voiceOverUrl && voiceOverDuration > 0 ? voiceOverDuration : exportDuration;
 
       // Select stories list based on active tab
-      const storiesList = activeTab === 'pictext' ? picTextBulkStories : bulkStories;
+      const storiesList = activeTab === 'pictext' 
+        ? picTextBulkStories 
+        : bulkStories.filter(s => s.text.trim().length > 0);
 
       // Pause preview playbacks if running
       if (voiceOverAudioRef.current) {
@@ -1401,27 +1405,43 @@ export default function App() {
       await new Promise(r => setTimeout(r, 500));
       if (cancelExportRef.current) throw new Error('Export cancelled');
 
-      // Loop over cards to capture their frames sequentially
+      // Fetch background video and music blobs once (outside loop) to save bandwidth/loading
+      let bgVideoFile: File | null = null;
+      if (videoBackground) {
+        try {
+          setBulkExportInfo('Preparing background video...');
+          const videoBlob = await fetch(videoBackground).then((r) => r.blob());
+          bgVideoFile = new File([videoBlob], 'background.mp4', { type: videoBlob.type || 'video/mp4' });
+        } catch (err) {
+          console.error('Failed to prepare background video for server upload:', err);
+        }
+      }
+
+      // We will loop over cards to capture and render each sequentially
       for (let p = 0; p < total; p++) {
         if (cancelExportRef.current) throw new Error('Export cancelled');
+        
         const node = cardElements[p] as HTMLElement;
         const story = storiesList[p];
         const pageText = story ? story.text : '';
 
-        if (voiceOverFile && pageText.trim().length > 0) {
-          // Sync timing mode for this page
-          setBulkExportInfo(`Calculating sentence highlight sync for Page ${p + 1}...`);
-          
+        // Formulate a fresh FormData for this single page
+        const pageFormData = new FormData();
+        
+        let sentenceTimings: any[] = [];
+        const isHighlightMode = voiceOverFile && pageText.trim().length > 0;
+
+        if (isHighlightMode) {
+          setBulkExportInfo(`Calculating sync timing for Page ${p + 1} of ${total}...`);
           const sentences = pageText
             .split(/(?<=[.!?])(?!\.)\s*/)
             .map(s => s.trim())
             .filter(s => s.length > 0);
           
-          let pageTimings: any[] = [];
           if (sentences.length > 0) {
             const totalChars = sentences.reduce((acc, s) => acc + s.length, 0);
             let elapsed = 0;
-            pageTimings = sentences.map((sent, index) => {
+            sentenceTimings = sentences.map((sent, index) => {
               const segDur = totalChars > 0 ? (sent.length / totalChars) * pageDuration : pageDuration / sentences.length;
               const start = elapsed;
               const end = elapsed + segDur;
@@ -1431,15 +1451,16 @@ export default function App() {
           }
 
           // Trigger state so this current card renders with its highlighting enabled
-          setCurrentCaptureCardTimings(pageTimings);
+          setCurrentCaptureCardTimings(sentenceTimings);
           setCurrentCaptureCardIdx(p);
 
           // Capture base frame (no sentence highlighted)
-          setBulkExportInfo(`Capturing base frame for Page ${p + 1}...`);
+          setBulkExportInfo(`Capturing base frame for Page ${p + 1} of ${total}...`);
           setActiveSentenceIndex(null);
-          await new Promise((resolve) => setTimeout(resolve, 250));
+          await new Promise((resolve) => setTimeout(resolve, 310));
 
-          const baseImgDataUrl = await toPng(node, {
+          const baseImgDataUrl = await toJpeg(node, {
+            quality: 0.85,
             cacheBust: true,
             pixelRatio: 1,
             width: 1080,
@@ -1452,16 +1473,17 @@ export default function App() {
             }
           });
           const baseBlob = await fetch(baseImgDataUrl).then(r => r.blob());
-          formData.append(`page_${p}_image_base`, baseBlob, `page-${p}-base-frame.png`);
+          pageFormData.append('image_base', baseBlob, 'frame-base.png');
 
           // Capture sequential highlight frames
-          for (let j = 0; j < pageTimings.length; j++) {
+          for (let j = 0; j < sentenceTimings.length; j++) {
             if (cancelExportRef.current) throw new Error('Export cancelled');
-            setBulkExportInfo(`Capturing highlight frame ${j + 1}/${pageTimings.length} for Page ${p + 1}...`);
+            setBulkExportInfo(`Capturing highlight frame ${j + 1}/${sentenceTimings.length} for Page ${p + 1}...`);
             setActiveSentenceIndex(j);
-            await new Promise((resolve) => setTimeout(resolve, 250));
+            await new Promise((resolve) => setTimeout(resolve, 310));
 
-            const highlightImgDataUrl = await toPng(node, {
+            const highlightImgDataUrl = await toJpeg(node, {
+              quality: 0.85,
               cacheBust: true,
               pixelRatio: 1,
               width: 1080,
@@ -1474,20 +1496,26 @@ export default function App() {
               }
             });
             const highlightBlob = await fetch(highlightImgDataUrl).then(r => r.blob());
-            formData.append(`page_${p}_image_${j}`, highlightBlob, `page-${p}-highlight-${j}.png`);
+            pageFormData.append(`image_${j}`, highlightBlob, `frame-${j}.png`);
           }
 
-          // Record timings metadata for the database/server
-          formData.append(`page_${p}_timings`, JSON.stringify(pageTimings.map(t => ({
+          pageFormData.append('timings', JSON.stringify(sentenceTimings.map(t => ({
             start: t.start,
             end: t.end,
             index: t.index
           }))));
+
+          if (voiceOverFile) {
+            pageFormData.append('voiceover', voiceOverFile);
+          }
         } else {
           // Standard single snapshot mode
-          setBulkExportInfo(`Capturing snapshot for Page ${p + 1}...`);
+          setBulkExportInfo(`Capturing snapshot for Page ${p + 1} of ${total}...`);
+          setCurrentCaptureCardIdx(p);
+          await new Promise((resolve) => setTimeout(resolve, 310));
           
-          const singleImgDataUrl = await toPng(node, {
+          const singleImgDataUrl = await toJpeg(node, {
+            quality: 0.85,
             cacheBust: true,
             pixelRatio: 1,
             width: 1080,
@@ -1500,124 +1528,140 @@ export default function App() {
             }
           });
           const singleBlob = await fetch(singleImgDataUrl).then(r => r.blob());
-          formData.append(`page_${p}_image`, singleBlob, `page-${p}-snapshot.png`);
+          pageFormData.append('image', singleBlob, 'overlay.png');
         }
-      }
 
-      // Reset capture state markers
-      setCurrentCaptureCardIdx(null);
-      setCurrentCaptureCardTimings([]);
-      setActiveSentenceIndex(null);
+        // Reset capture state markers for this page
+        setCurrentCaptureCardIdx(null);
+        setCurrentCaptureCardTimings([]);
+        setActiveSentenceIndex(null);
 
-      // Attach any common audio, video background files
-      if (videoBackground) {
-        try {
-          const videoBlob = await fetch(videoBackground).then((r) => r.blob());
-          const videoFile = new File([videoBlob], 'background.mp4', { type: videoBlob.type || 'video/mp4' });
-          formData.append('video', videoFile);
-        } catch (err) {
-          console.error('Failed to prepare background video for server upload:', err);
+        // Attach background video and audio
+        if (bgVideoFile) {
+          pageFormData.append('video', bgVideoFile);
         }
-      }
-
-      if (uploadedMusicFile) {
-        formData.append('audio', uploadedMusicFile);
-      }
-
-      if (voiceOverFile) {
-        formData.append('voiceover', voiceOverFile);
-      }
-
-      formData.append('duration', pageDuration.toString());
-      formData.append('voiceVolume', voiceVolume.toString());
-
-      setBulkExportInfo('Sending render queue to server...');
-
-      const controller = new AbortController();
-      abortControllerRef.current = controller;
-
-      const response = await fetch('/api/render-bulk-zip', {
-        method: 'POST',
-        body: formData,
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        throw new Error(`Server execution failure (HTTP ${response.status})`);
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('ReadableStream processing not supported by your browser.');
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let finalDownloadUrl = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (cancelExportRef.current) {
-          controller.abort();
-          throw new Error('Export cancelled');
+        if (uploadedMusicFile) {
+          pageFormData.append('audio', uploadedMusicFile);
         }
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
 
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const data = JSON.parse(line);
-            if (data.status === 'rendering') {
-              const progress = data.progress || 0;
-              setExportProgress(progress);
-              
-              const elapsedMs = Date.now() - (exportStartTimeRef.current || Date.now());
-              if (progress > 2 && elapsedMs > 500) {
-                const totalEstMs = (elapsedMs / progress) * 100;
-                const remainingMs = Math.max(0, totalEstMs - elapsedMs);
-                const remainingSecStr = (remainingMs / 1000).toFixed(0);
-                setExportEta(`ETA: ${remainingSecStr}s remaining`);
-                const msg = data.message || `Rendering bulk export... Progress: ${progress}%`;
-                setBulkExportInfo(`${msg} (ETA: ${remainingSecStr}s)`);
-              } else {
-                setExportEta('ETA: Calculating...');
-                setBulkExportInfo(data.message || `Rendering bulk export... Progress: ${progress}%`);
-              }
-            } else if (data.status === 'completed') {
-              finalDownloadUrl = data.downloadUrl;
-            } else if (data.status === 'error') {
-              throw new Error(data.error || 'Server rendering process returned an error');
+        pageFormData.append('duration', pageDuration.toString());
+        pageFormData.append('voiceVolume', voiceVolume.toString());
+
+        setBulkExportInfo(`Sending Page ${p + 1} of ${total} to rendering engine...`);
+
+        const controller = new AbortController();
+        abortControllerRef.current = controller;
+
+        const response = await fetch('/api/render', {
+          method: 'POST',
+          body: pageFormData,
+          signal: controller.signal,
+          credentials: 'include',
+        });
+
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('text/html') || !response.ok) {
+          const text = await response.text();
+          if (contentType.includes('text/html')) {
+            const preMatch = text.match(/<pre>([\s\S]*?)<\/pre>/i);
+            const titleMatch = text.match(/<title>([\s\S]*?)<\/title>/i);
+            const bodyMatch = text.match(/<body>([\s\S]*?)<\/body>/i);
+            
+            let extractedError = '';
+            if (preMatch && preMatch[1]) {
+              extractedError = preMatch[1].trim();
+            } else if (titleMatch && titleMatch[1]) {
+              extractedError = titleMatch[1].trim();
+            } else if (bodyMatch && bodyMatch[1]) {
+              extractedError = bodyMatch[1].replace(/<[^>]*>/g, '').trim();
+            } else {
+              extractedError = text.slice(0, 300).trim();
             }
-          } catch (e: any) {
-            if (e instanceof Error && e.message.includes('Server rendering')) {
-              throw e;
+            throw new Error(`Server Error details: ${extractedError}`);
+          } else {
+            try {
+              const parsed = JSON.parse(text);
+              throw new Error(parsed.error || `HTTP ${response.status}`);
+            } catch {
+              throw new Error(`HTTP ${response.status}: ${text.slice(0, 150)}`);
             }
-            console.warn('Chunk parsing minor warning:', e);
           }
         }
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('ReadableStream processing not supported by your browser.');
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let completedUrl = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (cancelExportRef.current) {
+            controller.abort();
+            throw new Error('Export cancelled');
+          }
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              if (line.trim().startsWith('<') || line.trim().toLowerCase().includes('html')) {
+                throw new Error('Server returned HTML instruction instead of streaming data.');
+              }
+              const data = JSON.parse(line);
+              if (data.status === 'rendering') {
+                const subProgress = data.progress || 0;
+                const overallProgress = Math.floor(((p + (subProgress / 100)) / total) * 100);
+                setExportProgress(overallProgress);
+                setBulkExportInfo(`Rendering Page ${p + 1}/${total}: ${subProgress}%`);
+              } else if (data.status === 'completed') {
+                completedUrl = data.downloadUrl;
+              } else if (data.status === 'error') {
+                throw new Error(data.error || 'Server rendering process returned an error');
+              }
+            } catch (e: any) {
+              if (e instanceof Error && (e.message.includes('Server rendering') || e.message.includes('Server returned HTML'))) {
+                throw e;
+              }
+              console.warn('Chunk parsing minor warning:', e);
+            }
+          }
+        }
+
+        if (!completedUrl) {
+          throw new Error(`Rendering Page ${p + 1} completed but no video file path was returned.`);
+        }
+
+        // Download the single compiled video blob to add to the client ZIP
+        setBulkExportInfo(`Downloading Page ${p + 1} video data into memory...`);
+        const videoResponse = await fetch(completedUrl, { credentials: 'include' });
+        if (!videoResponse.ok) {
+          throw new Error(`Failed to fetch completed video from ${completedUrl}`);
+        }
+        const videoBlob = await videoResponse.blob();
+        zip.file(`story-page-${p + 1}.mp4`, videoBlob);
       }
 
-      if (!finalDownloadUrl) {
-        throw new Error('Render completed but no download ZIP url was returned by server');
-      }
+      // Finish ZIP generation
+      setBulkExportInfo('Wrapping all pages up into a ZIP archive...');
+      setExportProgress(99);
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
 
-      setExportProgress(100);
-      setBulkExportInfo('Completed!');
-      setExportEta('');
-      setRenderedFileInfo({ downloadUrl: finalDownloadUrl, type: 'zip' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(zipBlob);
+      link.download = `bulk-stories-${Date.now()}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
       setIsExporting(false);
-
-      try {
-        const link = document.createElement('a');
-        link.href = finalDownloadUrl;
-        link.download = `bulk-stories-${Date.now()}.zip`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      } catch (e) {
-        console.error("Auto-download triggered but was blocked:", e);
-      }
+      setExportProgress(0);
+      setBulkExportInfo('');
+      setIsExportModalOpen(false);
 
     } catch (err: any) {
       setCurrentCaptureCardIdx(null);
@@ -1628,7 +1672,12 @@ export default function App() {
         console.log('Bulk export cancelled by user');
       } else {
         console.error('Bulk export failed:', err);
-        alert(err.message || 'Bulk video rendering failed on the server. Please check that parameters are correct.');
+        const errMsg = String(err.message || err);
+        if (errMsg.toLowerCase().includes('cookie check') || errMsg.toLowerCase().includes('gatekeeper')) {
+          alert(`Cookie Verification Redirect Detected:\n\nYour browser is blocking authentication cookies within the preview iframe. This is often caused by third-party cookie restrictions or tracking protection.\n\nTo perform exports and render videos successfully, please click the "Open in New Tab" (↗) icon in the top right corner of the AI Studio screen to run the app in its own tab!`);
+        } else {
+          alert(`Bulk video rendering failed: ${err.message || err}`);
+        }
       }
       setIsExporting(false);
       setExportProgress(0);
@@ -1646,9 +1695,6 @@ export default function App() {
     setIsExporting(true);
     setExportProgress(0);
     setBulkExportInfo(`Initializing bulk image export...`);
-    setExportEta('Calculating...');
-    setRenderedFileInfo(null);
-    exportStartTimeRef.current = Date.now();
 
     // Dynamically import jszip inside the handler to keep initial bundle size smaller
     const JSZip = (await import('jszip')).default;
@@ -1692,23 +1738,17 @@ export default function App() {
       setBulkExportInfo('Generating ZIP file...');
       const zipBlob = await zip.generateAsync({ type: 'blob' });
       const url = URL.createObjectURL(zipBlob);
-      
-      setExportProgress(100);
-      setBulkExportInfo('Completed!');
-      setExportEta('');
-      setRenderedFileInfo({ downloadUrl: url, type: 'zip' });
-      setIsExporting(false);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `bulk-images-${Date.now()}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
 
-      try {
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `bulk-images-${Date.now()}.zip`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      } catch (e) {
-        console.error("Auto-download triggered but was blocked:", e);
-      }
+      setIsExporting(false);
+      setExportProgress(0);
+      setBulkExportInfo('');
+      setIsExportModalOpen(false);
     } catch (err: any) {
       if (err instanceof Error && err.message === 'Export cancelled') {
         console.log('Bulk image export cancelled by user');
@@ -1767,9 +1807,6 @@ export default function App() {
       // Server-Side Video Export (FFmpeg on the Server)
       setExportProgress(0);
       setBulkExportInfo('Initializing...');
-      setExportEta('Calculating...');
-      setRenderedFileInfo(null);
-      exportStartTimeRef.current = Date.now();
       
       setTimeout(async () => {
         if (cancelExportRef.current) return;
@@ -1903,10 +1940,36 @@ export default function App() {
             method: 'POST',
             body: formData,
             signal: controller.signal,
+            credentials: 'include',
           });
 
-          if (!response.ok) {
-            throw new Error(`Server execution failure (HTTP ${response.status})`);
+          const contentType = response.headers.get('content-type') || '';
+          if (contentType.includes('text/html') || !response.ok) {
+            const text = await response.text();
+            if (contentType.includes('text/html')) {
+              const preMatch = text.match(/<pre>([\s\S]*?)<\/pre>/i);
+              const titleMatch = text.match(/<title>([\s\S]*?)<\/title>/i);
+              const bodyMatch = text.match(/<body>([\s\S]*?)<\/body>/i);
+              
+              let extractedError = '';
+              if (preMatch && preMatch[1]) {
+                extractedError = preMatch[1].trim();
+              } else if (titleMatch && titleMatch[1]) {
+                extractedError = titleMatch[1].trim();
+              } else if (bodyMatch && bodyMatch[1]) {
+                extractedError = bodyMatch[1].replace(/<[^>]*>/g, '').trim();
+              } else {
+                extractedError = text.slice(0, 300).trim();
+              }
+              throw new Error(`Server Error details: ${extractedError}`);
+            } else {
+              try {
+                const parsed = JSON.parse(text);
+                throw new Error(parsed.error || `HTTP ${response.status}`);
+              } catch {
+                throw new Error(`HTTP ${response.status}: ${text.slice(0, 150)}`);
+              }
+            }
           }
 
           const reader = response.body?.getReader();
@@ -1914,6 +1977,7 @@ export default function App() {
 
           const decoder = new TextDecoder();
           let buffer = '';
+          let completed = false;
 
           while (true) {
             const { done, value } = await reader.read();
@@ -1930,57 +1994,70 @@ export default function App() {
               if (!line.trim()) continue;
               let data: any = null;
               try {
+                // If response contains HTML tags, fail immediately to prevent infinite loading state
+                if (line.trim().startsWith('<') || line.trim().toLowerCase().includes('html')) {
+                  throw new Error('Server returned HTML instruction instead of streaming data. Check backend logs.');
+                }
                 data = JSON.parse(line);
-              } catch (e) {
+              } catch (e: any) {
                 console.warn('Chunk parsing minor warning:', e);
+                if (e instanceof Error && e.message.includes('Server returned HTML')) {
+                  throw e;
+                }
                 continue;
               }
 
               if (data && data.status === 'rendering') {
-                const progress = data.progress;
-                setExportProgress(progress);
-                const elapsedMs = Date.now() - (exportStartTimeRef.current || Date.now());
-                if (progress > 2 && elapsedMs > 500) {
-                  const totalEstMs = (elapsedMs / progress) * 100;
-                  const remainingMs = Math.max(0, totalEstMs - elapsedMs);
-                  const remainingSecStr = (remainingMs / 1000).toFixed(0);
-                  setExportEta(`ETA: ${remainingSecStr}s remaining`);
-                  setBulkExportInfo(`Processing video: ${Math.round(progress)}% (ETA: ${remainingSecStr}s)`);
-                } else {
-                  setExportEta('ETA: Calculating...');
-                  setBulkExportInfo(`Processing video: ${Math.round(progress)}%`);
-                }
+                setBulkExportInfo(`Processing video: ${Math.round(data.progress)}%`);
+                setExportProgress(data.progress);
               } else if (data && data.status === 'completed') {
+                completed = true;
                 setExportProgress(100);
                 setBulkExportInfo('Completed!');
-                setExportEta('');
                 
                 const downloadUrl = data.downloadUrl;
-                setRenderedFileInfo({ downloadUrl, type: 'video' });
-                setIsExporting(false);
-
-                try {
-                  const link = document.createElement('a');
-                  link.href = downloadUrl;
-                  link.download = downloadUrl.split('/').pop() || 'story-render.mp4';
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
-                } catch (e) {
-                  console.error("Auto-download triggered but was blocked:", e);
+                if (!downloadUrl) {
+                  throw new Error('Server indicated rendering is complete but failed to provide a valid download URL.');
                 }
+
+                console.log('[DEBUG] Frontend successfully received download URL:', downloadUrl);
+                
+                // Automatically start the download
+                const link = document.createElement('a');
+                link.href = downloadUrl;
+                link.download = downloadUrl.split('/').pop() || 'story-render.mp4';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+
+                // Stop the loading state once rendering is complete
+                setTimeout(() => {
+                  setIsExporting(false);
+                  setIsExportModalOpen(false);
+                  setExportProgress(0);
+                  setBulkExportInfo('');
+                }, 800);
                 return;
               } else if (data && data.status === 'error') {
                 throw new Error(data.error || 'Server rendering process returned an error');
               }
             }
           }
+
+          if (!completed) {
+            throw new Error('Connection closed before video rendering could complete.');
+          }
         } catch (err: any) {
           if (err instanceof Error && err.name === 'AbortError' || err?.message === 'Export cancelled') {
             console.log('Server-side video export cancelled.');
           } else {
             console.error('Server-side video export failed:', err);
-            alert('Video rendering failed on the server. Please check that FFmpeg is supported and all parameters are correct.');
+            const errMsg = String(err?.message || err);
+            if (errMsg.toLowerCase().includes('cookie check') || errMsg.toLowerCase().includes('gatekeeper')) {
+              alert(`Cookie Verification Redirect Detected:\n\nYour browser is blocking authentication cookies within the preview iframe. This is often caused by third-party cookie restrictions or tracking protection.\n\nTo perform exports and render videos successfully, please click the "Open in New Tab" (↗) icon in the top right corner of the AI Studio screen to run the app in its own tab!`);
+            } else {
+              alert(`Video rendering failed: ${err.message || err}`);
+            }
           }
           setIsExporting(false);
           setExportProgress(0);
@@ -2338,202 +2415,139 @@ export default function App() {
                 </button>
               </div>
 
-              {renderedFileInfo ? (
-                <div className="p-6 text-center space-y-6">
-                  <div className="flex flex-col items-center justify-center space-y-3">
-                    <div className="w-16 h-16 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center shadow-lg shadow-emerald-500/5 animate-pulse">
-                      <CheckCircle2 size={36} />
-                    </div>
-                    <h3 className="text-xl font-bold text-white">Rendering Complete!</h3>
-                    <p className="text-sm text-gray-400 leading-normal max-w-xs mx-auto">
-                      Your high-quality file has been successfully generated and is ready to save.
-                    </p>
-                  </div>
-
-                  <div className="bg-[#1c2229] border border-[#2a2d35] rounded-xl p-4 flex flex-col gap-2.5">
-                    <div className="flex justify-between items-center text-xs font-mono">
-                      <span className="text-gray-500">FORMAT</span>
-                      <span className="text-blue-400 font-bold uppercase">{renderedFileInfo.type === 'zip' ? 'ZIP Archive' : 'MP4 Video'}</span>
-                    </div>
-                    <div className="flex justify-between items-center text-xs font-mono">
-                      <span className="text-gray-500">FILE TYPE</span>
-                      <span className="text-gray-300 font-medium">{renderedFileInfo.type === 'zip' ? '.zip' : '.mp4'}</span>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-3">
-                    <a 
-                      href={renderedFileInfo.downloadUrl}
-                      download={renderedFileInfo.type === 'zip' ? `stories-export-${Date.now()}.zip` : `story-render-${Date.now()}.mp4`}
-                      className="w-full flex items-center justify-center gap-2 bg-emerald-400 hover:bg-emerald-300 text-black font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98]"
-                    >
-                      <Download size={18} /> Direct Save / Download
-                    </a>
-
-                    <button 
-                      onClick={() => {
-                        setRenderedFileInfo(null);
-                        setExportProgress(0);
-                        setBulkExportInfo('');
-                        setExportEta('');
-                      }}
-                      className="w-full py-2.5 text-xs text-blue-400 hover:text-blue-300 font-semibold border border-blue-500/20 hover:border-blue-500/40 rounded-xl bg-[#1c2229] transition-colors"
-                    >
-                      Export Different Format
-                    </button>
-                  </div>
-                </div>
-              ) : isExporting ? (
-                <div className="p-6 space-y-6">
-                  <div className="text-center space-y-2">
-                    <h3 className="text-xl font-bold flex items-center justify-center gap-2">
-                      <Loader2 size={24} className="text-blue-400 animate-spin" />
-                      Rendering Video
-                    </h3>
-                    <p className="text-sm text-gray-400">Please keep this window open while we process your elements.</p>
-                  </div>
-
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center text-xs font-semibold">
-                      <span className="text-gray-400 truncate max-w-[200px]">{bulkExportInfo || 'Processing...'}</span>
-                      <span className="text-blue-400 font-mono text-sm">{exportProgress}%</span>
-                    </div>
-
-                    <div className="w-full h-2.5 bg-[#2a2d35] rounded-full overflow-hidden relative">
-                      <motion.div 
-                        initial={{ width: 0 }}
-                        animate={{ width: `${exportProgress}%` }}
-                        transition={{ duration: 0.1 }}
-                        className="absolute h-full left-0 top-0 bg-blue-500 rounded-full"
-                      />
-                    </div>
-
-                    <div className="flex justify-between text-[11px] text-gray-500 font-medium">
-                      <span>{exportEta || 'Estimating time remaining...'}</span>
-                      <span>1080 x 1920 Full HD</span>
-                    </div>
-                  </div>
-
-                  <button 
-                    onClick={handleCancelExport}
-                    className="w-full flex items-center justify-center gap-2 bg-red-600 hover:bg-red-500 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98]"
-                  >
-                    <X size={18} /> Cancel Download
-                  </button>
-                </div>
-              ) : (
                 <div className="p-6 space-y-6">
                   <div>
                     <h3 className="text-xl font-bold mb-1">Export Story</h3>
                     <p className="text-sm text-gray-400">Choose your download format</p>
                   </div>
 
-                  {/* PNG Option */}
-                  <div 
-                    onClick={() => !isExporting && handleDownload('image')}
-                    className={cn(
-                      "flex items-center gap-4 p-4 rounded-xl border border-[#2a2d35] bg-[#1c2229] hover:bg-[#252c36] cursor-pointer transition-all group text-left",
-                      isExporting && "opacity-50 cursor-not-allowed"
-                    )}
-                  >
-                    <div className="w-12 h-12 rounded-lg bg-[#2a2d35] flex items-center justify-center group-hover:bg-[#353941]">
-                      {isExporting ? <Loader2 size={24} className="text-blue-400 animate-spin" /> : <ImageIcon size={24} className="text-blue-400" />}
+                  {/* Options List */}
+                  <div className="space-y-4">
+                    {/* PNG Option */}
+                    <div 
+                      onClick={() => !isExporting && setExportType('single_image')}
+                      className={cn(
+                        "flex items-center gap-4 p-4 rounded-xl border cursor-pointer transition-all group text-left relative",
+                        exportType === 'single_image' 
+                          ? "border-blue-500 bg-blue-500/5 ring-1 ring-blue-500/30" 
+                          : "border-[#2a2d35] bg-[#1c2229] hover:bg-[#252c36]",
+                        isExporting && "opacity-50 cursor-not-allowed"
+                      )}
+                    >
+                      <div className="w-10 h-10 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                        <ImageIcon size={20} className="text-blue-400" />
+                      </div>
+                      <div className="flex-1">
+                        <h4 className={cn("text-sm font-bold", exportType === 'single_image' && "text-blue-400")}>Image (PNG)</h4>
+                        <p className="text-xs text-gray-400">Single 1080p Full HD photo snapshot</p>
+                      </div>
+                      <div className="w-4 h-4 rounded-full border border-gray-500 flex items-center justify-center p-0.5 shrink-0">
+                        {exportType === 'single_image' && <div className="w-full h-full rounded-full bg-blue-400" />}
+                      </div>
                     </div>
-                    <div className="flex-1">
-                      <h4 className="font-bold">Image (PNG)</h4>
-                      <p className="text-xs text-gray-500">Single 1080p Full HD photo</p>
-                    </div>
-                  </div>
 
-                  {(isBulkMode || (activeTab === 'pictext' && isPicTextBulk)) && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {/* Bulk Video Option */}
-                      <div 
-                        onClick={() => !isExporting && handleBulkDownload()}
-                        className={cn(
-                          "p-4 rounded-xl border relative overflow-hidden text-left",
-                          isExporting ? (bulkExportInfo && !bulkExportInfo.toLowerCase().includes('image') ? "border-purple-500/50 bg-[#1c2229]" : "border-[#2a2d35] bg-[#1c2229] opacity-50 cursor-not-allowed") : "border-purple-500/40 bg-[#1c2229] ring-2 ring-purple-500/10 cursor-pointer hover:bg-[#252c36] group transition-all"
-                        )}
-                      >
-                        {isExporting && bulkExportInfo && !bulkExportInfo.toLowerCase().includes('image') && (
-                          <motion.div 
-                            initial={{ width: 0 }}
-                            animate={{ width: `${exportProgress}%` }}
-                            className="absolute bottom-0 left-0 h-1 bg-purple-500 transition-all duration-300"
-                          />
-                        )}
-                        <div className="flex items-start gap-4">
-                          <div className="w-12 h-12 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center shrink-0 group-hover:bg-purple-500/20">
-                            {isExporting && bulkExportInfo && !bulkExportInfo.toLowerCase().includes('image') ? (
-                              <Loader2 size={24} className="text-purple-400 animate-spin" />
-                            ) : (
-                              <PlusCircle size={24} className="text-purple-400" />
-                            )}
+                    {/* Video Option */}
+                    <div 
+                      onClick={() => !isExporting && setExportType('single_video')}
+                      className={cn(
+                        "flex items-center gap-4 p-4 rounded-xl border cursor-pointer transition-all group text-left relative",
+                        exportType === 'single_video' 
+                          ? "border-blue-500 bg-blue-500/5 ring-1 ring-blue-500/30" 
+                          : "border-[#2a2d35] bg-[#1c2229] hover:bg-[#252c36]",
+                        isExporting && "opacity-50 cursor-not-allowed"
+                      )}
+                    >
+                      <div className="w-10 h-10 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                        <Film size={20} className="text-blue-400" />
+                      </div>
+                      <div className="flex-1">
+                        <h4 className={cn("text-sm font-bold", exportType === 'single_video' && "text-blue-400")}>Single Video (MP4)</h4>
+                        <p className="text-xs text-gray-400">Render active story with animations & audio</p>
+                      </div>
+                      <div className="w-4 h-4 rounded-full border border-gray-500 flex items-center justify-center p-0.5 shrink-0">
+                        {exportType === 'single_video' && <div className="w-full h-full rounded-full bg-blue-400" />}
+                      </div>
+                    </div>
+
+                    {(isBulkMode || (activeTab === 'pictext' && isPicTextBulk)) && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Bulk Video Option */}
+                        <div 
+                          onClick={() => !isExporting && setExportType('bulk_video')}
+                          className={cn(
+                            "p-4 rounded-xl border relative overflow-hidden text-left cursor-pointer transition-all group flex flex-col justify-between h-full",
+                            exportType === 'bulk_video' 
+                              ? "border-purple-500 bg-purple-500/5 ring-1 ring-purple-500/30" 
+                              : "border-[#2a2d35] bg-[#1c2229] hover:bg-[#252c36]",
+                            isExporting && "opacity-50 cursor-not-allowed"
+                          )}
+                        >
+                          <div className="flex items-start justify-between w-full gap-2 mb-2">
+                            <div className="w-10 h-10 rounded-lg bg-purple-500/10 border border-purple-500/25 flex items-center justify-center shrink-0">
+                              <PlusCircle size={20} className="text-purple-400" />
+                            </div>
+                            <div className="w-4 h-4 rounded-full border border-gray-500 flex items-center justify-center p-0.5 shrink-0 mt-1">
+                              {exportType === 'bulk_video' && <div className="w-full h-full rounded-full bg-purple-400" />}
+                            </div>
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <h4 className="font-bold text-purple-400 text-sm">Bulk Video ZIP</h4>
-                            <p className="text-[11px] text-gray-500 leading-tight mt-0.5">Render all {activeTab === 'pictext' ? picTextBulkStories.filter(s => s.text.trim().length > 0 || s.image).length : bulkStories.filter(s => s.text.trim().length > 0).length} stories into high quality MP4 ZIP archive</p>
-                            {isExporting && bulkExportInfo && !bulkExportInfo.toLowerCase().includes('image') && (
-                              <p className="text-[10px] text-purple-400 font-bold uppercase tracking-widest mt-1.5">{bulkExportInfo} · {exportProgress}%</p>
-                            )}
+                          <div>
+                            <h4 className={cn("font-bold text-sm leading-tight text-purple-400")}>Bulk Download Video (ZIP)</h4>
+                            <p className="text-[11px] text-gray-400 leading-tight mt-1">Render all {activeTab === 'pictext' ? picTextBulkStories.filter(s => s.text.trim().length > 0 || s.image).length : bulkStories.filter(s => s.text.trim().length > 0).length} stories to a ZIP file</p>
+                          </div>
+                        </div>
+
+                        {/* Bulk Image Option */}
+                        <div 
+                          onClick={() => !isExporting && setExportType('bulk_image')}
+                          className={cn(
+                            "p-4 rounded-xl border relative overflow-hidden text-left cursor-pointer transition-all group flex flex-col justify-between h-full",
+                            exportType === 'bulk_image' 
+                              ? "border-emerald-500 bg-emerald-500/5 ring-1 ring-emerald-500/30" 
+                              : "border-[#2a2d35] bg-[#1c2229] hover:bg-[#252c36]",
+                            isExporting && "opacity-50 cursor-not-allowed"
+                          )}
+                        >
+                          <div className="flex items-start justify-between w-full gap-2 mb-2">
+                            <div className="w-10 h-10 rounded-lg bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center shrink-0">
+                              <ImageIcon size={20} className="text-emerald-400" />
+                            </div>
+                            <div className="w-4 h-4 rounded-full border border-gray-500 flex items-center justify-center p-0.5 shrink-0 mt-1">
+                              {exportType === 'bulk_image' && <div className="w-full h-full rounded-full bg-emerald-400" />}
+                            </div>
+                          </div>
+                          <div>
+                            <h4 className={cn("font-bold text-sm leading-tight text-emerald-400")}>Bulk Download Images (ZIP)</h4>
+                            <p className="text-[11px] text-gray-400 leading-tight mt-1">Export all {activeTab === 'pictext' ? picTextBulkStories.filter(s => s.text.trim().length > 0 || s.image).length : bulkStories.filter(s => s.text.trim().length > 0).length} pages as image ZIP</p>
                           </div>
                         </div>
                       </div>
+                    )}
+                  </div>
 
-                      {/* Bulk Image Option */}
-                      <div 
-                        onClick={() => !isExporting && handleBulkImageDownload()}
-                        className={cn(
-                          "p-4 rounded-xl border relative overflow-hidden text-left",
-                          isExporting ? (bulkExportInfo && bulkExportInfo.toLowerCase().includes('image') ? "border-emerald-500/50 bg-[#1c2229]" : "border-[#2a2d35] bg-[#1c2229] opacity-50 cursor-not-allowed") : "border-emerald-500/40 bg-[#1c2229] ring-2 ring-emerald-500/10 cursor-pointer hover:bg-[#252c36] group transition-all"
-                        )}
-                      >
-                        {isExporting && bulkExportInfo && bulkExportInfo.toLowerCase().includes('image') && (
-                          <motion.div 
-                            initial={{ width: 0 }}
-                            animate={{ width: `${exportProgress}%` }}
-                            className="absolute bottom-0 left-0 h-1 bg-emerald-500 transition-all duration-300"
-                          />
-                        )}
-                        <div className="flex items-start gap-4">
-                          <div className="w-12 h-12 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0 group-hover:bg-emerald-500/20">
-                            {isExporting && bulkExportInfo && bulkExportInfo.toLowerCase().includes('image') ? (
-                              <Loader2 size={24} className="text-emerald-400 animate-spin" />
-                            ) : (
-                              <ImageIcon size={24} className="text-emerald-400" />
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <h4 className="font-bold text-emerald-400 text-sm">Bulk Images ZIP</h4>
-                            <p className="text-[11px] text-gray-500 leading-tight mt-0.5">Render all {activeTab === 'pictext' ? picTextBulkStories.filter(s => s.text.trim().length > 0 || s.image).length : bulkStories.filter(s => s.text.trim().length > 0).length} pages as sharp PNG ZIP archive</p>
-                            {isExporting && bulkExportInfo && bulkExportInfo.toLowerCase().includes('image') && (
-                              <p className="text-[10px] text-emerald-400 font-bold uppercase tracking-widest mt-1.5">{bulkExportInfo} · {exportProgress}%</p>
-                            )}
-                          </div>
-                        </div>
+                  {/* Progress overlay if currently running */}
+                  {isExporting && (
+                    <div className="p-4 rounded-xl bg-[#14161b] border border-[#2a2d35] space-y-3">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-blue-400 font-bold uppercase tracking-wider animate-pulse flex items-center gap-1.5">
+                          <Loader2 size={12} className="animate-spin" />
+                          {bulkExportInfo || "Exporting..."}
+                        </span>
+                        <span className="font-mono text-gray-400 font-bold">{exportProgress}%</span>
+                      </div>
+                      <div className="w-full h-1.5 bg-[#252c36] rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-gradient-to-r from-blue-500 via-purple-500 to-emerald-500 transition-all duration-300 animate-pulse"
+                          style={{ width: `${exportProgress}%` }}
+                        />
                       </div>
                     </div>
                   )}
 
-                  {/* Video Option */}
-                  <div 
-                    className={cn(
-                      "p-4 rounded-xl border relative overflow-hidden text-left border-[#3b82f6]/40 bg-[#1c2229]"
-                    )}
-                  >
-                    <div className="flex items-center gap-4 mb-4">
-                      <div className="w-12 h-12 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
-                        <Film size={24} className="text-blue-400" />
-                      </div>
-                      <div className="flex-1">
-                        <h4 className="font-bold">Render & Export Video</h4>
-                        <p className="text-xs text-gray-500 leading-tight mt-0.5">Compile current active layout overlay sequence with optional video backing and custom timings</p>
-                      </div>
-                    </div>
-
-                    <div className="space-y-4">
-                      <div className="flex justify-between items-center text-xs font-medium">
-                        <span className="text-gray-400">Manual Video Duration Limit</span>
+                  {/* Inline Duration Settings (only if a video format is chosen) */}
+                  {(exportType === 'single_video' || exportType === 'bulk_video') && !isExporting && (
+                    <div className="p-4 bg-[#14161b] rounded-xl border border-[#2a2d35]/60 space-y-3">
+                      <div className="flex justify-between items-center text-xs font-semibold">
+                        <span className="text-gray-400">Video Duration per Page</span>
                         <span className="text-blue-400 font-mono">{exportDuration}s</span>
                       </div>
                       <input 
@@ -2543,23 +2557,50 @@ export default function App() {
                         value={exportDuration} 
                         onChange={(e) => setExportDuration(parseInt(e.target.value))}
                         disabled={isExporting}
-                        className="w-full accent-blue-500 cursor-pointer" 
+                        className="w-full h-1 bg-[#252c36] rounded-lg appearance-none cursor-pointer accent-blue-500" 
                       />
                       <div className="flex justify-between text-[10px] text-gray-500 font-medium">
                         <span>5s</span>
                         <span>1m 30s</span>
                       </div>
                     </div>
-                  </div>
+                  )}
 
-                  <button 
-                    onClick={() => handleDownload('video')}
-                    className="w-full flex items-center justify-center gap-2 bg-[#8ab4f8] hover:bg-[#a1c2fa] text-black font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98]"
-                  >
-                    <Download size={18} /> Export Video
-                  </button>
+                  {isExporting ? (
+                    <button 
+                      onClick={handleCancelExport}
+                      className="w-full flex items-center justify-center gap-2 bg-red-600 hover:bg-red-500 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98]"
+                    >
+                      <X size={18} /> Cancel Export
+                    </button>
+                  ) : (
+                    <button 
+                      onClick={() => {
+                        if (exportType === 'single_image') {
+                          handleDownload('image');
+                        } else if (exportType === 'single_video') {
+                          handleDownload('video');
+                        } else if (exportType === 'bulk_image') {
+                          handleBulkImageDownload();
+                        } else if (exportType === 'bulk_video') {
+                          handleBulkDownload();
+                        }
+                      }}
+                      className={cn(
+                        "w-full flex items-center justify-center gap-2 font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98]",
+                        exportType === 'bulk_video' ? "bg-purple-500 hover:bg-purple-400 text-white" :
+                        exportType === 'bulk_image' ? "bg-emerald-500 hover:bg-emerald-400 text-white" :
+                        "bg-[#8ab4f8] hover:bg-[#a1c2fa] text-black"
+                      )}
+                    >
+                      <Download size={18} /> 
+                      {exportType === 'single_image' && "Export Single Image (PNG)"}
+                      {exportType === 'single_video' && "Export Single Video"}
+                      {exportType === 'bulk_image' && "Export All Stories to Images (ZIP)"}
+                      {exportType === 'bulk_video' && "Export All Stories to Videos (ZIP)"}
+                    </button>
+                  )}
                 </div>
-              )}
             </motion.div>
           </div>
         )}
