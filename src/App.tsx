@@ -145,6 +145,19 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [bulkExportInfo, setBulkExportInfo] = useState('');
+  
+  // Persistent API Base URL configuration for external hosting support (e.g. Vercel)
+  const [apiBaseUrl, setApiBaseUrl] = useState(() => {
+    const stored = localStorage.getItem('API_BASE_URL');
+    if (stored !== null) return stored;
+    const hostname = window.location.hostname;
+    // Auto-fallback to local workspace container preview URL if run externally on Vercel
+    if (hostname !== 'localhost' && !hostname.endsWith('.run.app')) {
+      return 'https://ais-pre-kqidtxvhxcpuwsh2z475fd-268595849564.asia-southeast1.run.app';
+    }
+    return '';
+  });
+  const [showServerConfig, setShowServerConfig] = useState(false);
 
   const cancelExportRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -1552,7 +1565,7 @@ export default function App() {
         const controller = new AbortController();
         abortControllerRef.current = controller;
 
-        const response = await fetch('/api/render', {
+        const response = await fetch(`${apiBaseUrl}/api/render`, {
           method: 'POST',
           body: pageFormData,
           signal: controller.signal,
@@ -1638,7 +1651,8 @@ export default function App() {
 
         // Download the single compiled video blob to add to the client ZIP
         setBulkExportInfo(`Downloading Page ${p + 1} video data into memory...`);
-        const videoResponse = await fetch(completedUrl, { credentials: 'include' });
+        const targetFetchUrl = completedUrl.startsWith('http') ? completedUrl : `${apiBaseUrl}${completedUrl}`;
+        const videoResponse = await fetch(targetFetchUrl, { credentials: 'include' });
         if (!videoResponse.ok) {
           throw new Error(`Failed to fetch completed video from ${completedUrl}`);
         }
@@ -1936,7 +1950,7 @@ export default function App() {
           abortControllerRef.current = controller;
 
           setBulkExportInfo('Uploading to rendering engine...');
-          const response = await fetch('/api/render', {
+          const response = await fetch(`${apiBaseUrl}/api/render`, {
             method: 'POST',
             body: formData,
             signal: controller.signal,
@@ -2024,7 +2038,7 @@ export default function App() {
                 
                 // Automatically start the download
                 const link = document.createElement('a');
-                link.href = downloadUrl;
+                link.href = downloadUrl.startsWith('http') ? downloadUrl : `${apiBaseUrl}${downloadUrl}`;
                 link.download = downloadUrl.split('/').pop() || 'story-render.mp4';
                 document.body.appendChild(link);
                 link.click();
@@ -2615,10 +2629,67 @@ export default function App() {
               <h1 className="text-xl font-bold">Story Maker</h1>
               <p className="text-xs text-gray-400">Design beautiful text stories with live preview.</p>
             </div>
-            <div className="bg-[#2a2d35] px-2 py-1 rounded text-[10px] text-blue-400 font-mono">
-              Editing: Poster1
+            <div className="flex flex-col items-end gap-1.5">
+              <div className="bg-[#2a2d35] px-2 py-1 rounded text-[10px] text-blue-400 font-mono">
+                Editing: Poster1
+              </div>
+              <button 
+                onClick={() => setShowServerConfig(!showServerConfig)}
+                title="API Server Connection Settings"
+                className={cn(
+                  "px-2 py-1 rounded text-[9px] font-mono transition-colors border",
+                  apiBaseUrl 
+                    ? "bg-purple-950/40 text-purple-400 border-purple-500/20 hover:bg-purple-950/60" 
+                    : "bg-[#2a2d35]/60 text-gray-400 border-transparent hover:bg-[#353941]/80 hover:text-gray-300"
+                )}
+              >
+                ⚙️ Server Config
+              </button>
             </div>
           </div>
+
+          <AnimatePresence>
+            {showServerConfig && (
+              <motion.div 
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="mt-3 p-3 bg-[#1e222b] rounded border border-gray-800 text-[11px] overflow-hidden"
+              >
+                <div className="font-semibold text-gray-300 mb-1">Backend API Base URL</div>
+                <p className="text-gray-400 leading-normal mb-2 text-[10px]">
+                  To perform renders successfully from external hosts like Vercel, route requests to your active Cloud Run server URL.
+                </p>
+                <div className="flex gap-2">
+                  <input 
+                    type="text" 
+                    value={apiBaseUrl} 
+                    onChange={(e) => {
+                      const val = e.target.value.trim();
+                      setApiBaseUrl(val);
+                      localStorage.setItem('API_BASE_URL', val);
+                    }}
+                    placeholder="https://your-cloud-run-url.run.app"
+                    className="flex-1 bg-[#14161b] border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 focus:outline-none focus:border-blue-500"
+                  />
+                  {apiBaseUrl && (
+                    <button 
+                      onClick={() => {
+                        setApiBaseUrl('');
+                        localStorage.removeItem('API_BASE_URL');
+                      }}
+                      className="px-2 py-1 bg-red-950 hover:bg-red-900 border border-red-800/30 text-red-400 rounded text-xs transition-colors"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <div className="mt-1.5 text-gray-500 text-[10px]">
+                  Active Base: <span className="font-mono text-gray-400">{apiBaseUrl || '(Relative) /api'}</span>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
           
           <div className="flex mt-4 gap-2">
             <button 
