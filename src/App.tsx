@@ -141,6 +141,7 @@ export default function App() {
   const [selectedPresetId, setSelectedPresetId] = useState(TEMPLATE_PRESETS[1].id);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportType, setExportType] = useState<'single_image' | 'single_video' | 'bulk_image' | 'bulk_video'>('single_video');
+  const [renderMethod, setRenderMethod] = useState<'client' | 'server'>('client');
   const [exportDuration, setExportDuration] = useState(31);
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
@@ -190,17 +191,14 @@ export default function App() {
     return 'video/webm';
   }, []);
 
-  const recordCanvasToMp4 = async (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0) => {
+  const recordCanvasToMp4 = async (node: HTMLElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0, sentenceTimings?: any[]) => {
     // Check for WebCodecs support
     if (!('VideoEncoder' in window) || !('VideoFrame' in window)) {
       throw new Error('WebCodecs API not supported');
     }
 
-    // H.264 encoders often require even dimensions
-    let width = canvas.width;
-    let height = canvas.height;
-    if (width % 2 !== 0) width--;
-    if (height % 2 !== 0) height--;
+    const width = 1080;
+    const height = 1920;
 
     const fps = 30;
     const totalFrames = duration * fps;
@@ -311,6 +309,8 @@ export default function App() {
       encoder.configure(config);
     }
 
+    let staticCanvas: HTMLCanvasElement | null = null;
+
     try {
       for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
         if (cancelExportRef.current) {
@@ -373,7 +373,47 @@ export default function App() {
         }
 
         // 2. Draw UI snapshot on top
-        ctx.drawImage(canvas, 0, 0, width, height);
+        let dynamicCanvas: HTMLCanvasElement;
+        
+        if (sentenceTimings && sentenceTimings.length > 0) {
+          const currentTime = frameIndex / fps;
+          const matchedIdx = sentenceTimings.findIndex((t: any) => currentTime >= t.start && currentTime <= t.end);
+          setActiveSentenceIndex(matchedIdx !== -1 ? matchedIdx : null);
+          // Wait briefly for React rendering cycle to finish reflecting the highlight
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          
+          dynamicCanvas = await toCanvas(node, {
+            cacheBust: true,
+            pixelRatio: 1,
+            width: 1080,
+            height: 1920,
+            style: {
+              transform: 'none',
+              transformOrigin: 'top left',
+              width: '1080px',
+              height: '1920px'
+            }
+          });
+        } else {
+          // Optimization: If static, we can capture the canvas once and reuse it across all frames!
+          if (!staticCanvas) {
+            staticCanvas = await toCanvas(node, {
+              cacheBust: true,
+              pixelRatio: 1,
+              width: 1080,
+              height: 1920,
+              style: {
+                transform: 'none',
+                transformOrigin: 'top left',
+                width: '1080px',
+                height: '1920px'
+              }
+            });
+          }
+          dynamicCanvas = staticCanvas;
+        }
+
+        ctx.drawImage(dynamicCanvas, 0, 0, width, height);
 
         // We create a new VideoFrame using the offscreen canvas. 
         const frame = new VideoFrame(offscreen, { 
@@ -485,21 +525,21 @@ export default function App() {
     }
   };
 
-  const recordWithFallback = async (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0) => {
+  const recordWithFallback = async (node: HTMLElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0, sentenceTimings?: any[]) => {
     if ('VideoEncoder' in window) {
       try {
-        return await recordCanvasToMp4(canvas, duration, onProgress, videoUrl, overlayOpacity);
+        return await recordCanvasToMp4(node, duration, onProgress, videoUrl, overlayOpacity, sentenceTimings);
       } catch (err) {
         console.error('VideoEncoder failed, falling back to MediaRecorder:', err);
       }
     }
-    return await recordCanvasMediaRecorder(canvas, duration, onProgress, videoUrl, overlayOpacity);
+    return await recordCanvasMediaRecorder(node, duration, onProgress, videoUrl, overlayOpacity, sentenceTimings);
   };
 
-  const recordCanvasMediaRecorder = (canvas: HTMLCanvasElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0): Promise<Blob> => {
+  const recordCanvasMediaRecorder = (node: HTMLElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0, sentenceTimings?: any[]): Promise<Blob> => {
     return new Promise(async (resolve, reject) => {
-      const width = canvas.width;
-      const height = canvas.height;
+      const width = 1080;
+      const height = 1920;
       const offscreen = document.createElement('canvas');
       offscreen.width = width;
       offscreen.height = height;
@@ -579,6 +619,7 @@ export default function App() {
         
         const fps = 30;
         const totalFrames = duration * fps;
+        let staticCanvas: HTMLCanvasElement | null = null;
         
         for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
           if (cancelExportRef.current) {
@@ -635,7 +676,48 @@ export default function App() {
             }
           }
 
-          ctx.drawImage(canvas, 0, 0, width, height);
+          // Draw UI snapshot on top
+          let dynamicCanvas: HTMLCanvasElement;
+          
+          if (sentenceTimings && sentenceTimings.length > 0) {
+            const currentTime = frameIndex / fps;
+            const matchedIdx = sentenceTimings.findIndex((t: any) => currentTime >= t.start && currentTime <= t.end);
+            setActiveSentenceIndex(matchedIdx !== -1 ? matchedIdx : null);
+            // Wait briefly for React rendering cycle to finish reflecting the highlight
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            
+            dynamicCanvas = await toCanvas(node, {
+              cacheBust: true,
+              pixelRatio: 1,
+              width: 1080,
+              height: 1920,
+              style: {
+                transform: 'none',
+                transformOrigin: 'top left',
+                width: '1080px',
+                height: '1920px'
+              }
+            });
+          } else {
+            // Optimization: If static, we can capture the canvas once and reuse it across all frames!
+            if (!staticCanvas) {
+              staticCanvas = await toCanvas(node, {
+                cacheBust: true,
+                pixelRatio: 1,
+                width: 1080,
+                height: 1920,
+                style: {
+                  transform: 'none',
+                  transformOrigin: 'top left',
+                  width: '1080px',
+                  height: '1920px'
+                }
+              });
+            }
+            dynamicCanvas = staticCanvas;
+          }
+
+          ctx.drawImage(dynamicCanvas, 0, 0, width, height);
           
           if (onProgress) onProgress(Math.floor((frameIndex / totalFrames) * 100));
           
@@ -1818,9 +1900,63 @@ export default function App() {
         });
       }, 500);
     } else {
-      // Server-Side Video Export (FFmpeg on the Server)
-      setExportProgress(0);
-      setBulkExportInfo('Initializing...');
+      if (renderMethod === 'client') {
+        // Client-side Video Export (Pure Browser)
+        setExportProgress(0);
+        setBulkExportInfo('Initializing client-side rendering...');
+        
+        setTimeout(async () => {
+          if (cancelExportRef.current) return;
+          try {
+            // Pause any active audio preview playbacks first
+            if (voiceOverAudioRef.current) {
+              voiceOverAudioRef.current.pause();
+              setIsPlayingVoiceOver(false);
+            }
+
+            const durationValue = (voiceOverUrl && voiceOverDuration > 0) ? voiceOverDuration : exportDuration;
+            
+            setBulkExportInfo('Compiling video frames in browser...');
+            const videoBlob = await recordWithFallback(
+              node,
+              durationValue,
+              (progress) => setExportProgress(progress),
+              videoBackground,
+              bgImageOverlay,
+              voiceOverFile && sentenceTimings && sentenceTimings.length > 0 ? sentenceTimings : undefined
+            );
+
+            if (cancelExportRef.current) return;
+
+            setBulkExportInfo('Downloading completed video...');
+            const downloadUrl = URL.createObjectURL(videoBlob);
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            link.download = `story-render-${Date.now()}.mp4`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            // Clean active selection index back to default user preview
+            setActiveSentenceIndex(null);
+
+            setIsExporting(false);
+            setIsExportModalOpen(false);
+            setExportProgress(0);
+            setBulkExportInfo('');
+          } catch (err: any) {
+            setActiveSentenceIndex(null);
+            console.error('Client-side video export failed:', err);
+            alert(`Client-side video rendering failed: ${err.message || err}`);
+            setIsExporting(false);
+            setExportProgress(0);
+            setBulkExportInfo('');
+          }
+        }, 500);
+      } else {
+        // Server-Side Video Export (FFmpeg on the Server)
+        setExportProgress(0);
+        setBulkExportInfo('Initializing...');
       
       setTimeout(async () => {
         if (cancelExportRef.current) return;
@@ -2081,7 +2217,8 @@ export default function App() {
         }
       }, 500);
     }
-  }, [previewRef, exportDuration, videoBackground, bgImageOverlay, uploadedMusicFile]);
+  }
+}, [previewRef, exportDuration, videoBackground, bgImageOverlay, uploadedMusicFile]);
   
   const handleRandomHighlight = (index?: number) => {
     if (activeTab === 'pictext' && isPicTextBulk && typeof index === 'number') {
@@ -2557,25 +2694,71 @@ export default function App() {
                     </div>
                   )}
 
-                  {/* Inline Duration Settings (only if a video format is chosen) */}
+                   {/* Inline Duration Settings (only if a video format is chosen) */}
                   {(exportType === 'single_video' || exportType === 'bulk_video') && !isExporting && (
-                    <div className="p-4 bg-[#14161b] rounded-xl border border-[#2a2d35]/60 space-y-3">
-                      <div className="flex justify-between items-center text-xs font-semibold">
-                        <span className="text-gray-400">Video Duration per Page</span>
-                        <span className="text-blue-400 font-mono">{exportDuration}s</span>
+                    <div className="space-y-4">
+                      {/* Duration Settings */}
+                      <div className="p-4 bg-[#14161b] rounded-xl border border-[#2a2d35]/60 space-y-3">
+                        <div className="flex justify-between items-center text-xs font-semibold">
+                          <span className="text-gray-400">Video Duration per Page</span>
+                          <span className="text-blue-400 font-mono">{exportDuration}s</span>
+                        </div>
+                        <input 
+                          type="range" 
+                          min="5" 
+                          max="90" 
+                          value={exportDuration} 
+                          onChange={(e) => setExportDuration(parseInt(e.target.value))}
+                          disabled={isExporting}
+                          className="w-full h-1 bg-[#252c36] rounded-lg appearance-none cursor-pointer accent-blue-500" 
+                        />
+                        <div className="flex justify-between text-[10px] text-gray-500 font-medium">
+                          <span>5s</span>
+                          <span>1m 30s</span>
+                        </div>
                       </div>
-                      <input 
-                        type="range" 
-                        min="5" 
-                        max="90" 
-                        value={exportDuration} 
-                        onChange={(e) => setExportDuration(parseInt(e.target.value))}
-                        disabled={isExporting}
-                        className="w-full h-1 bg-[#252c36] rounded-lg appearance-none cursor-pointer accent-blue-500" 
-                      />
-                      <div className="flex justify-between text-[10px] text-gray-500 font-medium">
-                        <span>5s</span>
-                        <span>1m 30s</span>
+
+                      {/* Rendering Engine Selector */}
+                      <div className="p-4 bg-[#14161b] rounded-xl border border-[#2a2d35]/60 space-y-3">
+                        <div className="flex flex-col gap-1 text-left">
+                          <span className="text-xs font-semibold text-gray-400">Rendering Engine</span>
+                          <p className="text-[11px] text-gray-500 leading-tight">Choose high-speed client-side rendering or cloud-native server rendering</p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 bg-[#0c0d10] p-1 rounded-lg border border-[#2a2d35]/30">
+                          <button
+                            type="button"
+                            onClick={() => setRenderMethod('client')}
+                            className={cn(
+                              "py-1.5 px-3 text-xs font-bold rounded-md transition-all cursor-pointer",
+                              renderMethod === 'client'
+                                ? "bg-blue-600 text-white shadow"
+                                : "text-gray-400 hover:text-white"
+                            )}
+                          >
+                            ⚡ Client-Side Render
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setRenderMethod('server')}
+                            className={cn(
+                              "py-1.5 px-3 text-xs font-bold rounded-md transition-all cursor-pointer",
+                              renderMethod === 'server'
+                                ? "bg-blue-600 text-white shadow"
+                                : "text-gray-400 hover:text-white"
+                            )}
+                          >
+                            ☁️ Server-Side Render
+                          </button>
+                        </div>
+                        {renderMethod === 'client' ? (
+                          <div className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1">
+                            <span>✓ Bypasses browser/iframe cookie blocks. Highly recommended.</span>
+                          </div>
+                        ) : (
+                          <div className="text-[10px] text-yellow-500 font-semibold flex items-center gap-1">
+                            <span>⚠ Sensitive to third-party cookie restrictions in preview frames.</span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
