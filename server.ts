@@ -114,6 +114,13 @@ async function startServer() {
           f.fieldname === 'voice'
         );
 
+        if (audioFile) {
+          console.log('[DEBUG] Audio file uploaded successfully:', audioFile.originalname, 'Size:', audioFile.size);
+        }
+        if (voiceOverFile) {
+          console.log('[DEBUG] Voice-over file uploaded successfully:', voiceOverFile.originalname, 'Size:', voiceOverFile.size);
+        }
+
         const baseImageFile = uploadedFiles.find((f) => f.fieldname === 'image_base');
 
         const imageFilesMap: { [key: string]: Express.Multer.File } = {};
@@ -220,12 +227,14 @@ async function startServer() {
           args.push('-i', audioFile.path);
           audioInputIdx = currentInputIdx;
           currentInputIdx++;
+          console.log('[DEBUG] Audio file detected by FFmpeg: Index =', audioInputIdx, 'Path =', audioFile.path);
         }
 
         if (voiceOverFile) {
           args.push('-i', voiceOverFile.path);
           voiceInputIdx = currentInputIdx;
           currentInputIdx++;
+          console.log('[DEBUG] Audio file detected by FFmpeg: Index =', voiceInputIdx, 'Path =', voiceOverFile.path);
         }
 
         // Prepare filter complex
@@ -262,8 +271,8 @@ async function startServer() {
         if (audioFile || voiceOverFile) {
           hasAudio = true;
           if (audioFile && voiceOverFile) {
-            // Mix standard ambient background music (reduced volume) and voice over with custom voiceVolume
-            filterComplex += `[${audioInputIdx}:a]volume=0.15[bg_music]; [${voiceInputIdx}:a]volume=${voiceVolume}[vo_music]; [bg_music][vo_music]amix=inputs=2:duration=longest:dropout_transition=2[mixed_audio]; `;
+            // Mix standard ambient background music (reduced volume) and voice over with custom voiceVolume, normalizing=0 to preserve volumes
+            filterComplex += `[${audioInputIdx}:a]volume=0.15[bg_music]; [${voiceInputIdx}:a]volume=${voiceVolume}[vo_music]; [bg_music][vo_music]amix=inputs=2:duration=longest:dropout_transition=2:normalize=0[mixed_audio]; `;
           } else if (audioFile) {
             filterComplex += `[${audioInputIdx}:a]volume=1.0[mixed_audio]; `;
           } else if (voiceOverFile) {
@@ -289,6 +298,7 @@ async function startServer() {
         if (hasAudio) {
           args.push('-map', '[mixed_audio]');
           args.push('-c:a', 'aac', '-b:a', '192k');
+          console.log('[DEBUG] Audio stream mapped correctly: Destination = [mixed_audio]');
         } else {
           args.push('-an');
         }
@@ -369,6 +379,9 @@ async function startServer() {
           if (code === 0) {
             // 3. Log: FFmpeg completed
             console.log('[DEBUG] FFmpeg completed successfully (code 0)');
+            if (hasAudio) {
+              console.log('[DEBUG] Audio merged into final MP4 successfully!');
+            }
 
             // 4. Verify file exists and is accessible before returning download URL
             const downloadUrl = `/api/download/${outputFilename}`;
@@ -523,6 +536,13 @@ async function startServer() {
           f.fieldname === 'voice'
         );
 
+        if (audioFile) {
+          console.log('[DEBUG] Audio file uploaded successfully:', audioFile.originalname, 'Size:', audioFile.size);
+        }
+        if (voiceOverFile) {
+          console.log('[DEBUG] Voice-over file uploaded successfully:', voiceOverFile.originalname, 'Size:', voiceOverFile.size);
+        }
+
         const pageCount = parseInt(req.body.page_count || '0');
         const duration = parseFloat(req.body.duration || '5') || 5;
         const voiceVolume = parseFloat(req.body.voiceVolume || '1.0') || 1.0;
@@ -601,12 +621,14 @@ async function startServer() {
             args.push('-i', audioFile.path);
             audioInputIdx = currentInputIdx;
             currentInputIdx++;
+            console.log(`[DEBUG] Audio file detected by FFmpeg for page ${p + 1}: Index =`, audioInputIdx);
           }
 
           if (voiceOverFile) {
             args.push('-i', voiceOverFile.path);
             voiceInputIdx = currentInputIdx;
             currentInputIdx++;
+            console.log(`[DEBUG] Audio file detected by FFmpeg for page ${p + 1}: Index =`, voiceInputIdx);
           }
 
           let filterComplex = '';
@@ -638,7 +660,7 @@ async function startServer() {
           if (audioFile || voiceOverFile) {
             hasAudio = true;
             if (audioFile && voiceOverFile) {
-              filterComplex += `[${audioInputIdx}:a]volume=0.15[bg_music]; [${voiceInputIdx}:a]volume=${voiceVolume}[vo_music]; [bg_music][vo_music]amix=inputs=2:duration=longest:dropout_transition=2[mixed_audio]; `;
+              filterComplex += `[${audioInputIdx}:a]volume=0.15[bg_music]; [${voiceInputIdx}:a]volume=${voiceVolume}[vo_music]; [bg_music][vo_music]amix=inputs=2:duration=longest:dropout_transition=2:normalize=0[mixed_audio]; `;
             } else if (audioFile) {
               filterComplex += `[${audioInputIdx}:a]volume=1.0[mixed_audio]; `;
             } else if (voiceOverFile) {
@@ -662,6 +684,7 @@ async function startServer() {
           if (hasAudio) {
             args.push('-map', '[mixed_audio]');
             args.push('-c:a', 'aac', '-b:a', '192k');
+            console.log(`[DEBUG] Audio stream mapped correctly for page ${p + 1}: Destination = [mixed_audio]`);
           } else {
             args.push('-an');
           }
@@ -732,6 +755,9 @@ async function startServer() {
               if (code === 0) {
                 // 3. Log: FFmpeg completed
                 console.log(`[DEBUG] FFmpeg completed successfully for page ${p + 1} of ${pageCount}`);
+                if (hasAudio) {
+                  console.log(`[DEBUG] Audio merged into final MP4 successfully for page ${p + 1}!`);
+                }
                 resolve();
               } else {
                 const errLog = Buffer.concat(stderrChunks).toString();

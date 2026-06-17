@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toPng, toJpeg, toCanvas } from 'html-to-image';
+import { flushSync } from 'react-dom';
 import { cn } from './lib/utils';
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import { TEMPLATE_PRESETS, TemplatePreset } from './constants';
@@ -141,11 +142,18 @@ export default function App() {
   const [selectedPresetId, setSelectedPresetId] = useState(TEMPLATE_PRESETS[1].id);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportType, setExportType] = useState<'single_image' | 'single_video' | 'bulk_image' | 'bulk_video'>('single_video');
+  const [exportQuantity, setExportQuantity] = useState<number>(1);
   const [renderMethod, setRenderMethod] = useState<'client' | 'server'>('client');
   const [exportDuration, setExportDuration] = useState(31);
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [bulkExportInfo, setBulkExportInfo] = useState('');
+  
+  // High-fidelity progress stats for multi-video/bulk configurations
+  const [exportTotalVideos, setExportTotalVideos] = useState<number>(0);
+  const [exportCompletedVideos, setExportCompletedVideos] = useState<number>(0);
+  const [exportCurrentVideoName, setExportCurrentVideoName] = useState<string>('');
+  const [exportStage, setExportStage] = useState<'Preparing' | 'Rendering' | 'Encoding' | 'Creating ZIP' | 'Complete' | ''>('');
   
   // Persistent API Base URL configuration for external hosting support (e.g. Vercel)
   const [apiBaseUrl, setApiBaseUrl] = useState(() => {
@@ -159,6 +167,57 @@ export default function App() {
     return '';
   });
   const [showServerConfig, setShowServerConfig] = useState(false);
+  const [exportStartTime, setExportStartTime] = useState<number | null>(null);
+  const [estimatedRemainingText, setEstimatedRemainingText] = useState('Calculating...');
+
+  useEffect(() => {
+    if (isExporting) {
+      setExportStartTime(Date.now());
+    } else {
+      setExportStartTime(null);
+      setEstimatedRemainingText('Calculating...');
+    }
+  }, [isExporting]);
+
+  useEffect(() => {
+    if (!isExporting || !exportStartTime) {
+      setEstimatedRemainingText('Calculating...');
+      return;
+    }
+
+    const interval = setInterval(() => {
+      const elapsedMs = Date.now() - exportStartTime;
+      if (exportProgress <= 0) {
+        setEstimatedRemainingText('Calculating...');
+        return;
+      }
+
+      // Percentage per millisecond
+      const rate = exportProgress / elapsedMs;
+      if (rate <= 0) {
+        setEstimatedRemainingText('Calculating...');
+        return;
+      }
+      const progressRemaining = 100 - exportProgress;
+      const estRemainingMs = progressRemaining / rate;
+
+      if (estRemainingMs <= 0 || isNaN(estRemainingMs) || !isFinite(estRemainingMs)) {
+        setEstimatedRemainingText('Just a few seconds remaining...');
+        return;
+      }
+
+      const totalSec = Math.ceil(estRemainingMs / 1000);
+      if (totalSec < 60) {
+        setEstimatedRemainingText(`About ${totalSec}s remaining`);
+      } else {
+        const min = Math.floor(totalSec / 60);
+        const sec = totalSec % 60;
+        setEstimatedRemainingText(`About ${min}m ${sec}s remaining`);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isExporting, exportStartTime, exportProgress]);
 
   const cancelExportRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -191,11 +250,79 @@ export default function App() {
     return 'video/webm';
   }, []);
 
+  const mixAudioBuffers = async (
+    backgroundBuffer: AudioBuffer | null,
+    voiceOverBuffer: AudioBuffer | null,
+    voiceVol: number,
+    bgVol: number,
+    targetDuration: number
+  ): Promise<AudioBuffer | null> => {
+    if (!backgroundBuffer && !voiceOverBuffer) return null;
+
+    const sampleRate = voiceOverBuffer ? voiceOverBuffer.sampleRate : (backgroundBuffer ? backgroundBuffer.sampleRate : 44100);
+    const numberOfChannels = 2; // Mix to stereo
+    const totalSamples = Math.floor(targetDuration * sampleRate);
+
+    const OfflineCtxClass = window.OfflineAudioContext || (window as any).webkitOfflineAudioContext;
+    if (!OfflineCtxClass) {
+      console.warn("OfflineAudioContext not supported");
+      return null;
+    }
+
+    const offlineCtx = new OfflineCtxClass(numberOfChannels, totalSamples, sampleRate);
+
+    if (backgroundBuffer) {
+      const bgSource = offlineCtx.createBufferSource();
+      bgSource.buffer = backgroundBuffer;
+      bgSource.loop = true;
+
+      const bgGain = offlineCtx.createGain();
+      bgGain.gain.setValueAtTime(bgVol, 0);
+
+      bgSource.connect(bgGain);
+      bgGain.connect(offlineCtx.destination);
+      bgSource.start(0);
+    }
+
+    if (voiceOverBuffer) {
+      const voSource = offlineCtx.createBufferSource();
+      voSource.buffer = voiceOverBuffer;
+      voSource.loop = false;
+
+      const voGain = offlineCtx.createGain();
+      voGain.gain.setValueAtTime(voiceVol, 0);
+
+      voSource.connect(voGain);
+      voGain.connect(offlineCtx.destination);
+      voSource.start(0);
+    }
+
+    try {
+      const renderedBuffer = await offlineCtx.startRendering();
+      return renderedBuffer;
+    } catch (err) {
+      console.error("Failed to render offline mixed audio buffer:", err);
+      return voiceOverBuffer || backgroundBuffer; // Fallback to either buffer if mixing fails
+    }
+  };
+
   const recordCanvasToMp4 = async (node: HTMLElement, duration: number, onProgress?: (p: number) => void, videoUrl?: string | null, overlayOpacity: number = 0, sentenceTimings?: any[]) => {
     // Check for WebCodecs support
     if (!('VideoEncoder' in window) || !('VideoFrame' in window)) {
       throw new Error('WebCodecs API not supported');
     }
+
+    console.log('[DEBUG] =============== STARTING CLIENT-SIDE VIDEO RENDERING PIPELINE ===============');
+    console.log(`[DEBUG] Main Timeline Info: Duration = ${duration.toFixed(2)}s, Web Video Target FPS = 30, Total Target Frames = ${Math.round(duration * 30)}`);
+    console.log('[DEBUG] --- TIMESTAMP MAPPING FOR EACH SENTENCE ---');
+    if (sentenceTimings && sentenceTimings.length > 0) {
+      sentenceTimings.forEach((t, i) => {
+        console.log(`[DEBUG]   Sentence Index #${i}: Start = ${t.start.toFixed(2)}s | End = ${t.end.toFixed(2)}s | Duration = ${(t.end - t.start).toFixed(2)}s | Text: "${t.text.substring(0, 60)}"`);
+      });
+    } else {
+      console.log('[DEBUG]   No interactive sentence timings aligned. Carrying out static text export.');
+    }
+    console.log('[DEBUG] -----------------------------------------------------------------------------');
 
     const width = 1080;
     const height = 1920;
@@ -254,6 +381,15 @@ export default function App() {
       });
     }
 
+    // Pre-mix both music and voiceover audios if present
+    const finalMixedAudioBuffer = await mixAudioBuffers(
+      uploadedMusicBuffer,
+      voiceOverBuffer,
+      voiceVolume,
+      voiceOverBuffer ? 0.15 : 1.0,
+      duration
+    );
+
     const muxer = new Muxer({
       target: new ArrayBufferTarget(),
       video: {
@@ -261,10 +397,10 @@ export default function App() {
         width,
         height
       },
-      audio: uploadedMusicBuffer ? {
+      audio: finalMixedAudioBuffer ? {
         codec: 'aac',
-        numberOfChannels: uploadedMusicBuffer.numberOfChannels,
-        sampleRate: uploadedMusicBuffer.sampleRate
+        numberOfChannels: finalMixedAudioBuffer.numberOfChannels,
+        sampleRate: finalMixedAudioBuffer.sampleRate
       } : undefined,
       fastStart: 'in-memory'
     });
@@ -329,6 +465,8 @@ export default function App() {
     }
 
     let staticCanvas: HTMLCanvasElement | null = null;
+    let lastSentenceIdx: number | null = -999;
+    let cachedSentenceCanvas: HTMLCanvasElement | null = null;
 
     try {
       for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
@@ -397,22 +535,50 @@ export default function App() {
         if (sentenceTimings && sentenceTimings.length > 0) {
           const currentTime = frameIndex / fps;
           const matchedIdx = sentenceTimings.findIndex((t: any) => currentTime >= t.start && currentTime <= t.end);
-          setActiveSentenceIndex(matchedIdx !== -1 ? matchedIdx : null);
-          // Wait briefly for React rendering cycle to finish reflecting the highlight
-          await new Promise((resolve) => setTimeout(resolve, 50));
           
-          dynamicCanvas = await toCanvas(node, {
-            cacheBust: true,
-            pixelRatio: 1,
-            width: 1080,
-            height: 1920,
-            style: {
-              transform: 'none',
-              transformOrigin: 'top left',
-              width: '1080px',
-              height: '1920px'
+          // Audio-video synchronization checks & periodic logs
+          if (frameIndex % 30 === 0) {
+            console.log(`[DEBUG] Audio-Video Synchronization Check: Frame = ${frameIndex}/${totalFrames} | progress = ${Math.floor((frameIndex / totalFrames) * 100)}% | currentTime = ${currentTime.toFixed(3)}s | Active Sentence Index = ${matchedIdx}`);
+          }
+
+          // Highlight activation/deactivation timing logs
+          if (matchedIdx !== lastSentenceIdx) {
+            if (matchedIdx !== -1) {
+              console.log(`[DEBUG] Highlight Activated: Sentence Index #${matchedIdx} at ${currentTime.toFixed(3)}s. Text: "${sentenceTimings[matchedIdx].text.substring(0, 50)}..."`);
+            } else {
+              console.log(`[DEBUG] Highlight Deactivated: No sentence segment mapped at ${currentTime.toFixed(3)}s (Previously active index was #${lastSentenceIdx})`);
             }
-          });
+          }
+
+          const isWordSync = voiceOverSyncMode === 'word' || voiceOverSyncMode === 'accumulate';
+          const shouldUpdateCapture = isWordSync || (matchedIdx !== lastSentenceIdx) || !cachedSentenceCanvas;
+
+          if (shouldUpdateCapture) {
+            lastSentenceIdx = matchedIdx;
+
+            // Force synchronous React DOM flush so that the card elements instantly reflect the correct highlight styling
+            flushSync(() => {
+              setActiveSentenceIndex(matchedIdx !== -1 ? matchedIdx : null);
+              setVoiceOverPlaybackTime(currentTime);
+            });
+
+            // Brief micro-delay for the browser to cycle style updates cleanly
+            await new Promise((resolve) => setTimeout(resolve, 15));
+
+            cachedSentenceCanvas = await toCanvas(node, {
+              cacheBust: true,
+              pixelRatio: 1,
+              width: 1080,
+              height: 1920,
+              style: {
+                transform: 'none',
+                transformOrigin: 'top left',
+                width: '1080px',
+                height: '1920px'
+              }
+            });
+          }
+          dynamicCanvas = cachedSentenceCanvas;
         } else {
           // Optimization: If static, we can capture the canvas once and reuse it across all frames!
           if (!staticCanvas) {
@@ -462,10 +628,11 @@ export default function App() {
       await encoder.flush();
       encoder.close(); // Close the encoder after we are done
 
-      // Encode audio if uploaded
+      // Encode audio if uploaded/mixed
       let audioEncoderError: Error | null = null;
       let audioEncoder: AudioEncoder | null = null;
-      if (uploadedMusicBuffer) {
+      if (finalMixedAudioBuffer) {
+        console.log('[DEBUG] Audio stream mixed successfully. Starting browser AAC audio encoding...');
         audioEncoder = new AudioEncoder({
           output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
           error: (e) => {
@@ -476,13 +643,13 @@ export default function App() {
 
         audioEncoder.configure({
           codec: 'mp4a.40.2',
-          numberOfChannels: uploadedMusicBuffer.numberOfChannels,
-          sampleRate: uploadedMusicBuffer.sampleRate,
+          numberOfChannels: finalMixedAudioBuffer.numberOfChannels,
+          sampleRate: finalMixedAudioBuffer.sampleRate,
           bitrate: 128000
         });
 
-        const sampleRate = uploadedMusicBuffer.sampleRate;
-        const numberOfChannels = uploadedMusicBuffer.numberOfChannels;
+        const sampleRate = finalMixedAudioBuffer.sampleRate;
+        const numberOfChannels = finalMixedAudioBuffer.numberOfChannels;
         const chunkFrames = 1024;
         const totalSamples = Math.floor(duration * sampleRate);
 
@@ -495,7 +662,7 @@ export default function App() {
           const chunkData = new Float32Array(currentChunkSize * numberOfChannels);
           
           for (let channel = 0; channel < numberOfChannels; channel++) {
-            const channelData = uploadedMusicBuffer.getChannelData(channel);
+            const channelData = finalMixedAudioBuffer.getChannelData(channel);
             for (let i = 0; i < currentChunkSize; i++) {
               const sourceIndex = (offset + i) % channelData.length;
               chunkData[channel * currentChunkSize + i] = channelData[sourceIndex];
@@ -518,6 +685,7 @@ export default function App() {
 
         await audioEncoder.flush();
         audioEncoder.close();
+        console.log('[DEBUG] Browser audio encoding completed successfully.');
       }
 
       muxer.finalize();
@@ -569,6 +737,8 @@ export default function App() {
 
       let video: HTMLVideoElement | null = null;
       let audio: HTMLAudioElement | null = null;
+      let voAudio: HTMLAudioElement | null = null;
+      let pcmAudioCtx: AudioContext | null = null;
 
       try {
         if (videoUrl) {
@@ -613,23 +783,56 @@ export default function App() {
 
         const stream = offscreen.captureStream(30);
 
-        if (uploadedMusicUrl) {
-          audio = document.createElement('audio');
-          audio.src = uploadedMusicUrl;
-          audio.crossOrigin = 'anonymous';
-          audio.loop = true;
-          audio.volume = 1.0;
+        if (uploadedMusicUrl || voiceOverUrl) {
           try {
-            audio.play().catch(e => console.log('Autoplay blocked in media recorder:', e));
-            const audioStream = (audio as any).captureStream ? (audio as any).captureStream() : (audio as any).mozCaptureStream ? (audio as any).mozCaptureStream() : null;
-            if (audioStream) {
-              const audioTrack = audioStream.getAudioTracks()[0];
-              if (audioTrack) {
-                stream.addTrack(audioTrack);
-              }
+            const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+            pcmAudioCtx = new AudioContextClass();
+            pcmAudioCtx.resume().catch(() => {});
+            const audioStreamDestination = pcmAudioCtx.createMediaStreamDestination();
+
+            if (uploadedMusicUrl) {
+              audio = document.createElement('audio');
+              audio.src = uploadedMusicUrl;
+              audio.crossOrigin = 'anonymous';
+              audio.loop = true;
+              audio.volume = 1.0;
+              document.body.appendChild(audio);
+
+              const bgGain = pcmAudioCtx.createGain();
+              bgGain.gain.setValueAtTime(voiceOverUrl ? 0.15 : 1.0, 0);
+
+              const bgSourceNode = pcmAudioCtx.createMediaElementSource(audio);
+              bgSourceNode.connect(bgGain);
+              bgGain.connect(audioStreamDestination);
+              
+              audio.play().catch(e => console.log('Background music fallback play error:', e));
+            }
+
+            if (voiceOverUrl) {
+              voAudio = document.createElement('audio');
+              voAudio.src = voiceOverUrl;
+              voAudio.crossOrigin = 'anonymous';
+              voAudio.loop = false;
+              voAudio.volume = 1.0;
+              document.body.appendChild(voAudio);
+
+              const voGain = pcmAudioCtx.createGain();
+              voGain.gain.setValueAtTime(voiceVolume, 0);
+
+              const voSourceNode = pcmAudioCtx.createMediaElementSource(voAudio);
+              voSourceNode.connect(voGain);
+              voGain.connect(audioStreamDestination);
+
+              voAudio.play().catch(e => console.log('VoiceOver media recorder fallback play error:', e));
+            }
+
+            const tracks = audioStreamDestination.stream.getAudioTracks();
+            if (tracks.length > 0) {
+              stream.addTrack(tracks[0]);
+              console.log('[DEBUG] Fallback MediaRecorder audio track mixed and attached.');
             }
           } catch (e) {
-            console.error("Failed to attach audio track to media recorder fallback:", e);
+            console.error("Failed to attach AudioContext tracks to MediaRecorder fallback:", e);
           }
         }
 
@@ -660,6 +863,8 @@ export default function App() {
         const fps = 30;
         const totalFrames = duration * fps;
         let staticCanvas: HTMLCanvasElement | null = null;
+        let lastSentenceIdx: number | null = -999;
+        let cachedSentenceCanvas: HTMLCanvasElement | null = null;
         
         for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
           if (cancelExportRef.current) {
@@ -722,22 +927,27 @@ export default function App() {
           if (sentenceTimings && sentenceTimings.length > 0) {
             const currentTime = frameIndex / fps;
             const matchedIdx = sentenceTimings.findIndex((t: any) => currentTime >= t.start && currentTime <= t.end);
-            setActiveSentenceIndex(matchedIdx !== -1 ? matchedIdx : null);
-            // Wait briefly for React rendering cycle to finish reflecting the highlight
-            await new Promise((resolve) => setTimeout(resolve, 50));
             
-            dynamicCanvas = await toCanvas(node, {
-              cacheBust: true,
-              pixelRatio: 1,
-              width: 1080,
-              height: 1920,
-              style: {
-                transform: 'none',
-                transformOrigin: 'top left',
-                width: '1080px',
-                height: '1920px'
-              }
-            });
+            if (matchedIdx !== lastSentenceIdx || !cachedSentenceCanvas) {
+              lastSentenceIdx = matchedIdx;
+              setActiveSentenceIndex(matchedIdx !== -1 ? matchedIdx : null);
+              // Wait briefly for React rendering cycle to finish reflecting the highlight
+              await new Promise((resolve) => setTimeout(resolve, 50));
+              
+              cachedSentenceCanvas = await toCanvas(node, {
+                cacheBust: true,
+                pixelRatio: 1,
+                width: 1080,
+                height: 1920,
+                style: {
+                  transform: 'none',
+                  transformOrigin: 'top left',
+                  width: '1080px',
+                  height: '1920px'
+                }
+              });
+            }
+            dynamicCanvas = cachedSentenceCanvas;
           } else {
             // Optimization: If static, we can capture the canvas once and reuse it across all frames!
             if (!staticCanvas) {
@@ -782,6 +992,15 @@ export default function App() {
           audio.pause();
           audio.remove();
           audio = null;
+        }
+        if (voAudio) {
+          voAudio.pause();
+          voAudio.remove();
+          voAudio = null;
+        }
+        if (pcmAudioCtx) {
+          pcmAudioCtx.close().catch(() => {});
+          pcmAudioCtx = null;
         }
       }
     });
@@ -932,7 +1151,7 @@ export default function App() {
   const [storyText, setStoryText] = useState('Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [[Again?]] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...');
   const [highlightColor, setHighlightColor] = useState('#150621');
   const [textColor, setTextColor] = useState('#150621');
-  const [fontFamily, setFontFamily] = useState('font-serif');
+  const [fontFamily, setFontFamily] = useState('font-roboto-condensed');
   const [fontStyle, setFontStyle] = useState('normal');
   const [textAlign, setTextAlign] = useState<'left' | 'center' | 'right'>('left');
   const [fontSize, setFontSize] = useState(62);
@@ -980,6 +1199,7 @@ export default function App() {
   // Voice-Over State
   const [voiceOverFile, setVoiceOverFile] = useState<File | null>(null);
   const [voiceOverUrl, setVoiceOverUrl] = useState<string | null>(null);
+  const [voiceOverBuffer, setVoiceOverBuffer] = useState<AudioBuffer | null>(null);
   const [voiceOverDuration, setVoiceOverDuration] = useState<number>(0);
   const [voiceOverPlaybackTime, setVoiceOverPlaybackTime] = useState<number>(0);
   const [isPlayingVoiceOver, setIsPlayingVoiceOver] = useState<boolean>(false);
@@ -1069,12 +1289,23 @@ export default function App() {
     }
   }, [uploadedMusicUrl, isMusicMuted, isExporting]);
 
-  const handleVoiceOverUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleVoiceOverUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       setVoiceOverFile(file);
+      console.log('[DEBUG] Audio file uploaded successfully:', file.name, 'Size:', file.size);
       const url = URL.createObjectURL(file);
       setVoiceOverUrl(url);
+
+      // Decode audio data for MP4 WebCodecs exports
+      try {
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const arrayBuffer = await file.arrayBuffer();
+        const decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+        setVoiceOverBuffer(decodedBuffer);
+      } catch (err) {
+        console.error("Failed to decode uploaded voiceover audio:", err);
+      }
 
       // Automatically remove any previously applied highlights (brackets [ and ])
       setStoryText(prev => prev ? prev.replace(/[\[\]]/g, '') : '');
@@ -1516,11 +1747,16 @@ export default function App() {
     cancelExportRef.current = false;
     setIsExporting(true);
     setExportProgress(0);
-    setBulkExportInfo(`Initializing bulk sequential export...`);
+    
+    const total = cardElements.length;
+    const totalVideos = total * exportQuantity;
+    setExportTotalVideos(totalVideos);
+    setExportCompletedVideos(0);
+    setExportStage('Preparing');
+    setBulkExportInfo(`Initializing bulk sequential export of ${totalVideos} total files...`);
 
     const JSZip = (await import('jszip')).default;
     const zip = new JSZip();
-    const total = cardElements.length;
 
     // Determine page duration
     const pageDuration = voiceOverUrl && voiceOverDuration > 0 ? voiceOverDuration : exportDuration;
@@ -1532,6 +1768,8 @@ export default function App() {
 
     const runClientSideBulkRender = async () => {
       setBulkExportInfo(`Initializing client-side bulk sequential export...`);
+      let currentVideoCount = 0;
+
       for (let p = 0; p < total; p++) {
         if (cancelExportRef.current) throw new Error('Export cancelled');
         
@@ -1561,38 +1799,53 @@ export default function App() {
           }
         }
 
-        setBulkExportInfo(`Rendering Page ${p + 1} of ${total} in browser...`);
-        
-        setCurrentCaptureCardIdx(p);
-        if (isHighlightMode) {
-          setCurrentCaptureCardTimings(sentenceTimings);
+        for (let q = 1; q <= exportQuantity; q++) {
+          if (cancelExportRef.current) throw new Error('Export cancelled');
+          currentVideoCount++;
+
+          const uniqueName = exportQuantity > 1 
+            ? `story-page-${p + 1}_video_${q}.mp4` 
+            : `story-page-${p + 1}.mp4`;
+
+          setExportCurrentVideoName(uniqueName);
+          setExportStage('Rendering');
+          setBulkExportInfo(`Rendering Page ${p + 1}/${total} (Copy ${q}/${exportQuantity}) in browser...`);
+
+          setCurrentCaptureCardIdx(p);
+          if (isHighlightMode) {
+            setCurrentCaptureCardTimings(sentenceTimings);
+          }
+          await new Promise((resolve) => setTimeout(resolve, 310));
+
+          const pageVideoBlob = await recordWithFallback(
+            node,
+            pageDuration,
+            (progress) => {
+              const overallProgress = Math.floor(((currentVideoCount - 1) * 100 + progress) / totalVideos);
+              setExportProgress(overallProgress);
+              setExportStage(progress < 85 ? 'Rendering' : 'Encoding');
+              setBulkExportInfo(`Compiling copy ${q} of page ${p + 1}: ${progress}%`);
+            },
+            videoBackground,
+            bgImageOverlay,
+            sentenceTimings.length > 0 ? sentenceTimings : undefined
+          );
+
+          zip.file(uniqueName, pageVideoBlob);
+          setExportCompletedVideos(currentVideoCount);
+
+          setCurrentCaptureCardIdx(null);
+          setCurrentCaptureCardTimings([]);
+          setActiveSentenceIndex(null);
         }
-        await new Promise((resolve) => setTimeout(resolve, 310));
-
-        const pageVideoBlob = await recordWithFallback(
-          node,
-          pageDuration,
-          (progress) => {
-            const overallProgress = Math.floor(((p + (progress / 100)) / total) * 100);
-            setExportProgress(overallProgress);
-            setBulkExportInfo(`Compiling Page ${p + 1}/${total}: ${progress}%`);
-          },
-          videoBackground,
-          bgImageOverlay,
-          sentenceTimings.length > 0 ? sentenceTimings : undefined
-        );
-
-        zip.file(`story-page-${p + 1}.mp4`, pageVideoBlob);
-
-        setCurrentCaptureCardIdx(null);
-        setCurrentCaptureCardTimings([]);
-        setActiveSentenceIndex(null);
       }
 
+      setExportStage('Creating ZIP');
       setBulkExportInfo('Wrapping all pages up into a ZIP archive...');
       setExportProgress(99);
       const zipBlob = await zip.generateAsync({ type: 'blob' });
 
+      setExportStage('Complete');
       const link = document.createElement('a');
       link.href = URL.createObjectURL(zipBlob);
       link.download = `bulk-stories-${Date.now()}.zip`;
@@ -1604,10 +1857,13 @@ export default function App() {
       setExportProgress(0);
       setBulkExportInfo('');
       setIsExportModalOpen(false);
+      setExportStage('');
+      setExportTotalVideos(0);
+      setExportCompletedVideos(0);
+      setExportCurrentVideoName('');
     };
 
     try {
-
       // Pause preview playbacks if running
       if (voiceOverAudioRef.current) {
         voiceOverAudioRef.current.pause();
@@ -1634,6 +1890,8 @@ export default function App() {
         }
       }
 
+      let currentVideoCount = 0;
+
       // We will loop over cards to capture and render each sequentially
       for (let p = 0; p < total; p++) {
         if (cancelExportRef.current) throw new Error('Export cancelled');
@@ -1641,12 +1899,14 @@ export default function App() {
         const node = cardElements[p] as HTMLElement;
         const story = storiesList[p];
         const pageText = story ? story.text : '';
-
-        // Formulate a fresh FormData for this single page
-        const pageFormData = new FormData();
         
         let sentenceTimings: any[] = [];
         const isHighlightMode = voiceOverFile && pageText.trim().length > 0;
+
+        // Capture files for page p ONCE
+        let cachedBaseBlob: Blob | null = null;
+        const cachedHighlightBlobs: { blob: Blob; index: number }[] = [];
+        let cachedSingleBlob: Blob | null = null;
 
         if (isHighlightMode) {
           setBulkExportInfo(`Calculating sync timing for Page ${p + 1} of ${total}...`);
@@ -1673,8 +1933,11 @@ export default function App() {
 
           // Capture base frame (no sentence highlighted)
           setBulkExportInfo(`Capturing base frame for Page ${p + 1} of ${total}...`);
-          setActiveSentenceIndex(null);
-          await new Promise((resolve) => setTimeout(resolve, 310));
+          flushSync(() => {
+            setActiveSentenceIndex(null);
+            setVoiceOverPlaybackTime(0);
+          });
+          await new Promise((resolve) => setTimeout(resolve, 60));
 
           const baseImgDataUrl = await toJpeg(node, {
             quality: 0.85,
@@ -1689,15 +1952,22 @@ export default function App() {
               height: '1920px'
             }
           });
-          const baseBlob = await fetch(baseImgDataUrl).then(r => r.blob());
-          pageFormData.append('image_base', baseBlob, 'frame-base.png');
+          cachedBaseBlob = await fetch(baseImgDataUrl).then(r => r.blob());
 
           // Capture sequential highlight frames
           for (let j = 0; j < sentenceTimings.length; j++) {
             if (cancelExportRef.current) throw new Error('Export cancelled');
+            
+            const t = sentenceTimings[j];
+            const midTime = (t.start + t.end) / 2;
+
             setBulkExportInfo(`Capturing highlight frame ${j + 1}/${sentenceTimings.length} for Page ${p + 1}...`);
-            setActiveSentenceIndex(j);
-            await new Promise((resolve) => setTimeout(resolve, 310));
+            
+            flushSync(() => {
+              setActiveSentenceIndex(j);
+              setVoiceOverPlaybackTime(midTime);
+            });
+            await new Promise((resolve) => setTimeout(resolve, 60));
 
             const highlightImgDataUrl = await toJpeg(node, {
               quality: 0.85,
@@ -1713,17 +1983,7 @@ export default function App() {
               }
             });
             const highlightBlob = await fetch(highlightImgDataUrl).then(r => r.blob());
-            pageFormData.append(`image_${j}`, highlightBlob, `frame-${j}.png`);
-          }
-
-          pageFormData.append('timings', JSON.stringify(sentenceTimings.map(t => ({
-            start: t.start,
-            end: t.end,
-            index: t.index
-          }))));
-
-          if (voiceOverFile) {
-            pageFormData.append('voiceover', voiceOverFile);
+            cachedHighlightBlobs.push({ blob: highlightBlob, index: j });
           }
         } else {
           // Standard single snapshot mode
@@ -1744,8 +2004,7 @@ export default function App() {
               height: '1920px'
             }
           });
-          const singleBlob = await fetch(singleImgDataUrl).then(r => r.blob());
-          pageFormData.append('image', singleBlob, 'overlay.png');
+          cachedSingleBlob = await fetch(singleImgDataUrl).then(r => r.blob());
         }
 
         // Reset capture state markers for this page
@@ -1753,122 +2012,135 @@ export default function App() {
         setCurrentCaptureCardTimings([]);
         setActiveSentenceIndex(null);
 
-        // Attach background video and audio
-        if (bgVideoFile) {
-          pageFormData.append('video', bgVideoFile);
-        }
-        if (uploadedMusicFile) {
-          pageFormData.append('audio', uploadedMusicFile);
-        }
+        // Now, loop q from 1 to exportQuantity to compile each copy
+        for (let q = 1; q <= exportQuantity; q++) {
+          if (cancelExportRef.current) throw new Error('Export cancelled');
+          currentVideoCount++;
 
-        pageFormData.append('duration', pageDuration.toString());
-        pageFormData.append('voiceVolume', voiceVolume.toString());
+          const uniqueName = exportQuantity > 1 
+            ? `story-page-${p + 1}_video_${q}.mp4` 
+            : `story-page-${p + 1}.mp4`;
 
-        setBulkExportInfo(`Sending Page ${p + 1} of ${total} to rendering engine...`);
+          setExportCurrentVideoName(uniqueName);
+          setExportStage('Rendering');
+          setBulkExportInfo(`Sending page ${p + 1}/${total} (copy ${q}/${exportQuantity}) to server...`);
 
-        const controller = new AbortController();
-        abortControllerRef.current = controller;
+          const pageFormData = new FormData();
 
-        const response = await fetch(`${apiBaseUrl}/api/render`, {
-          method: 'POST',
-          body: pageFormData,
-          signal: controller.signal,
-          credentials: 'include',
-        });
-
-        const contentType = response.headers.get('content-type') || '';
-        if (contentType.includes('text/html') || !response.ok) {
-          const text = await response.text();
-          if (contentType.includes('text/html')) {
-            const preMatch = text.match(/<pre>([\s\S]*?)<\/pre>/i);
-            const titleMatch = text.match(/<title>([\s\S]*?)<\/title>/i);
-            const bodyMatch = text.match(/<body>([\s\S]*?)<\/body>/i);
-            
-            let extractedError = '';
-            if (preMatch && preMatch[1]) {
-              extractedError = preMatch[1].trim();
-            } else if (titleMatch && titleMatch[1]) {
-              extractedError = titleMatch[1].trim();
-            } else if (bodyMatch && bodyMatch[1]) {
-              extractedError = bodyMatch[1].replace(/<[^>]*>/g, '').trim();
-            } else {
-              extractedError = text.slice(0, 300).trim();
+          // Append overlay files
+          if (isHighlightMode) {
+            if (cachedBaseBlob) {
+              pageFormData.append('image_base', cachedBaseBlob, 'frame-base.png');
             }
-            throw new Error(`Server Error details: ${extractedError}`);
+            cachedHighlightBlobs.forEach((item) => {
+              pageFormData.append(`image_${item.index}`, item.blob, `frame-${item.index}.png`);
+            });
+            pageFormData.append('timings', JSON.stringify(sentenceTimings.map(t => ({
+              start: t.start,
+              end: t.end,
+              index: t.index
+            }))));
           } else {
-            try {
-              const parsed = JSON.parse(text);
-              throw new Error(parsed.error || `HTTP ${response.status}`);
-            } catch {
-              throw new Error(`HTTP ${response.status}: ${text.slice(0, 150)}`);
+            if (cachedSingleBlob) {
+              pageFormData.append('image', cachedSingleBlob, 'overlay.png');
             }
           }
-        }
 
-        const reader = response.body?.getReader();
-        if (!reader) throw new Error('ReadableStream processing not supported by your browser.');
-
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let completedUrl = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (cancelExportRef.current) {
-            controller.abort();
-            throw new Error('Export cancelled');
+          // Attach background video and audio
+          if (bgVideoFile) {
+            pageFormData.append('video', bgVideoFile);
           }
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
+          if (uploadedMusicFile) {
+            pageFormData.append('audio', uploadedMusicFile);
+          }
+          if (voiceOverFile) {
+            pageFormData.append('voiceover', voiceOverFile);
+          }
 
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-              if (line.trim().startsWith('<') || line.trim().toLowerCase().includes('html')) {
-                throw new Error('Server returned HTML instruction instead of streaming data.');
+          pageFormData.append('duration', pageDuration.toString());
+          pageFormData.append('voiceVolume', voiceVolume.toString());
+
+          const controller = new AbortController();
+          abortControllerRef.current = controller;
+
+          const response = await fetch(`${apiBaseUrl}/api/render`, {
+            method: 'POST',
+            body: pageFormData,
+            signal: controller.signal,
+            credentials: 'include',
+          });
+
+          const contentType = response.headers.get('content-type') || '';
+          if (contentType.includes('text/html') || !response.ok) {
+            const text = await response.text();
+            throw new Error(`Server bulk failed: ${text.slice(0, 200)}`);
+          }
+
+          const reader = response.body?.getReader();
+          if (!reader) throw new Error('ReadableStream processing errors.');
+
+          const decoder = new TextDecoder();
+          let buffer = '';
+          let completedUrl = '';
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (cancelExportRef.current) {
+              controller.abort();
+              throw new Error('Export cancelled');
+            }
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              try {
+                const data = JSON.parse(line);
+                if (data.status === 'rendering') {
+                  const subProgress = data.progress || 0;
+                  setExportStage(subProgress < 90 ? 'Rendering' : 'Encoding');
+                  const overallProgress = Math.floor(((currentVideoCount - 1) * 100 + subProgress) / totalVideos);
+                  setExportProgress(overallProgress);
+                  setBulkExportInfo(`Rendering page ${p + 1} (Copy ${q}/${exportQuantity}): ${subProgress}%`);
+                } else if (data.status === 'completed') {
+                  completedUrl = data.downloadUrl;
+                } else if (data.status === 'error') {
+                  throw new Error(data.error || 'Server rendering process returned an error');
+                }
+              } catch (e: any) {
+                if (e instanceof Error && (e.message.includes('Server') || e.message.includes('cancelled'))) {
+                  throw e;
+                }
               }
-              const data = JSON.parse(line);
-              if (data.status === 'rendering') {
-                const subProgress = data.progress || 0;
-                const overallProgress = Math.floor(((p + (subProgress / 100)) / total) * 100);
-                setExportProgress(overallProgress);
-                setBulkExportInfo(`Rendering Page ${p + 1}/${total}: ${subProgress}%`);
-              } else if (data.status === 'completed') {
-                completedUrl = data.downloadUrl;
-              } else if (data.status === 'error') {
-                throw new Error(data.error || 'Server rendering process returned an error');
-              }
-            } catch (e: any) {
-              if (e instanceof Error && (e.message.includes('Server rendering') || e.message.includes('Server returned HTML'))) {
-                throw e;
-              }
-              console.warn('Chunk parsing minor warning:', e);
             }
           }
-        }
 
-        if (!completedUrl) {
-          throw new Error(`Rendering Page ${p + 1} completed but no video file path was returned.`);
-        }
+          if (!completedUrl) {
+            throw new Error(`Rendering Page ${p + 1} Copy ${q} completed but no video file path was returned.`);
+          }
 
-        // Download the single compiled video blob to add to the client ZIP
-        setBulkExportInfo(`Downloading Page ${p + 1} video data into memory...`);
-        const targetFetchUrl = completedUrl.startsWith('http') ? completedUrl : `${apiBaseUrl}${completedUrl}`;
-        const videoResponse = await fetch(targetFetchUrl, { credentials: 'include' });
-        if (!videoResponse.ok) {
-          throw new Error(`Failed to fetch completed video from ${completedUrl}`);
+          setExportStage('Encoding');
+          setBulkExportInfo(`Downloading Page ${p + 1} Copy ${q} video into zip bundle...`);
+          const targetFetchUrl = completedUrl.startsWith('http') ? completedUrl : `${apiBaseUrl}${completedUrl}`;
+          const videoResponse = await fetch(targetFetchUrl, { credentials: 'include' });
+          if (!videoResponse.ok) {
+            throw new Error(`Failed to fetch completed video from ${completedUrl}`);
+          }
+          const videoBlob = await videoResponse.blob();
+          zip.file(uniqueName, videoBlob);
+          setExportCompletedVideos(currentVideoCount);
         }
-        const videoBlob = await videoResponse.blob();
-        zip.file(`story-page-${p + 1}.mp4`, videoBlob);
       }
 
       // Finish ZIP generation
+      setExportStage('Creating ZIP');
       setBulkExportInfo('Wrapping all pages up into a ZIP archive...');
       setExportProgress(99);
       const zipBlob = await zip.generateAsync({ type: 'blob' });
 
+      setExportStage('Complete');
       const link = document.createElement('a');
       link.href = URL.createObjectURL(zipBlob);
       link.download = `bulk-stories-${Date.now()}.zip`;
@@ -1880,6 +2152,10 @@ export default function App() {
       setExportProgress(0);
       setBulkExportInfo('');
       setIsExportModalOpen(false);
+      setExportStage('');
+      setExportTotalVideos(0);
+      setExportCompletedVideos(0);
+      setExportCurrentVideoName('');
 
     } catch (err: any) {
       setCurrentCaptureCardIdx(null);
@@ -1891,6 +2167,10 @@ export default function App() {
         setIsExporting(false);
         setExportProgress(0);
         setBulkExportInfo('');
+        setExportStage('');
+        setExportTotalVideos(0);
+        setExportCompletedVideos(0);
+        setExportCurrentVideoName('');
       } else {
         console.error('Bulk export failed:', err);
         const errMsg = String(err.message || err);
@@ -1906,18 +2186,26 @@ export default function App() {
             setIsExporting(false);
             setExportProgress(0);
             setBulkExportInfo('');
+            setExportStage('');
+            setExportTotalVideos(0);
+            setExportCompletedVideos(0);
+            setExportCurrentVideoName('');
           }
         } else {
           alert(`Bulk video rendering failed: ${err.message || err}`);
           setIsExporting(false);
           setExportProgress(0);
           setBulkExportInfo('');
+          setExportStage('');
+          setExportTotalVideos(0);
+          setExportCompletedVideos(0);
+          setExportCurrentVideoName('');
         }
       }
     } finally {
       abortControllerRef.current = null;
     }
-  }, [exportDuration, videoBackground, bgImageOverlay, uploadedMusicFile, voiceOverFile, voiceOverUrl, voiceOverDuration, voiceVolume, activeTab, picTextBulkStories, bulkStories, renderMethod]);
+  }, [exportDuration, videoBackground, bgImageOverlay, uploadedMusicFile, voiceOverFile, voiceOverUrl, voiceOverDuration, voiceVolume, activeTab, picTextBulkStories, bulkStories, renderMethod, exportQuantity]);
 
   const handleBulkImageDownload = useCallback(async () => {
     const cardElements = document.querySelectorAll('.bulk-poster-card');
@@ -1926,49 +2214,78 @@ export default function App() {
     cancelExportRef.current = false;
     setIsExporting(true);
     setExportProgress(0);
+    
+    const totalCards = cardElements.length;
+    const totalImages = totalCards * exportQuantity;
+    setExportTotalVideos(totalImages);
+    setExportCompletedVideos(0);
+    setExportStage('Preparing');
     setBulkExportInfo(`Initializing bulk image export...`);
 
     // Dynamically import jszip inside the handler to keep initial bundle size smaller
     const JSZip = (await import('jszip')).default;
     const zip = new JSZip();
-    const total = cardElements.length;
 
     try {
       await new Promise(r => setTimeout(r, 500));
       if (cancelExportRef.current) throw new Error('Export cancelled');
 
-      for (let i = 0; i < total; i++) {
-        if (cancelExportRef.current) throw new Error('Export cancelled');
+      let currentProcessedCount = 0;
+
+      for (let i = 0; i < totalCards; i++) {
         const node = cardElements[i] as HTMLElement;
-        setBulkExportInfo(`Exporting Image ${i + 1} of ${total}`);
 
-        // Generate base64 dataUrl with pixelRatio 1 for extremely sharp native 1080x1920 canvas export
-        const dataUrl = await toPng(node, {
-          cacheBust: true,
-          pixelRatio: 1,
-          width: 1080,
-          height: 1920,
-          style: {
-            transform: 'none',
-            transformOrigin: 'top left',
-            width: '1080px',
-            height: '1920px'
-          }
-        });
+        for (let q = 1; q <= exportQuantity; q++) {
+          if (cancelExportRef.current) throw new Error('Export cancelled');
+          currentProcessedCount++;
 
-        if (cancelExportRef.current) throw new Error('Export cancelled');
+          const pageNum = i + 1;
+          const copyHeader = exportQuantity > 1 ? ` (Copy ${q}/${exportQuantity})` : '';
+          
+          setExportStage('Rendering');
+          setBulkExportInfo(`Processing image ${currentProcessedCount} of ${totalImages}${copyHeader}`);
 
-        // Parse base64 string out of the data URL
-        const base64Data = dataUrl.replace(/^data:image\/png;base64,/, '');
-        zip.file(`story-${i + 1}.png`, base64Data, { base64: true });
+          // Generate base64 dataUrl with pixelRatio 1 for extremely sharp native 1080x1920 canvas export
+          const dataUrl = await toPng(node, {
+            cacheBust: true,
+            pixelRatio: 1,
+            width: 1080,
+            height: 1920,
+            style: {
+              transform: 'none',
+              transformOrigin: 'top left',
+              width: '1080px',
+              height: '1920px'
+            }
+          });
 
-        const overallProgress = Math.floor(((i + 1) / total) * 100);
-        setExportProgress(overallProgress);
+          if (cancelExportRef.current) throw new Error('Export cancelled');
+
+          // Parse base64 string out of the data URL
+          const base64Data = dataUrl.replace(/^data:image\/png;base64,/, '');
+          
+          // Generate unique filename
+          const fileName = exportQuantity > 1 
+            ? `story-${pageNum}_image_${q}.png` 
+            : `story-${pageNum}.png`;
+
+          setExportCurrentVideoName(fileName);
+          setExportStage('Encoding');
+
+          zip.file(fileName, base64Data, { base64: true });
+          setExportCompletedVideos(currentProcessedCount);
+
+          const overallProgress = Math.floor((currentProcessedCount / totalImages) * 100);
+          setExportProgress(overallProgress);
+        }
       }
 
       if (cancelExportRef.current) throw new Error('Export cancelled');
+      setExportStage('Creating ZIP');
       setBulkExportInfo('Generating ZIP file...');
       const zipBlob = await zip.generateAsync({ type: 'blob' });
+      setExportStage('Complete');
+      
       const url = URL.createObjectURL(zipBlob);
       const link = document.createElement('a');
       link.href = url;
@@ -1981,6 +2298,10 @@ export default function App() {
       setExportProgress(0);
       setBulkExportInfo('');
       setIsExportModalOpen(false);
+      setExportStage('');
+      setExportTotalVideos(0);
+      setExportCompletedVideos(0);
+      setExportCurrentVideoName('');
     } catch (err: any) {
       if (err instanceof Error && err.message === 'Export cancelled') {
         console.log('Bulk image export cancelled by user');
@@ -1990,8 +2311,12 @@ export default function App() {
       setIsExporting(false);
       setExportProgress(0);
       setBulkExportInfo('');
+      setExportStage('');
+      setExportTotalVideos(0);
+      setExportCompletedVideos(0);
+      setExportCurrentVideoName('');
     }
-  }, []);
+  }, [exportQuantity]);
 
   const handleDownload = useCallback(async (type: 'image' | 'video' = 'image') => {
     if (previewRef.current === null) return;
@@ -2000,45 +2325,134 @@ export default function App() {
     cancelExportRef.current = false;
     setIsExporting(true);
     
-    // const { toPng, toCanvas } = await import('html-to-image');
-    
     if (type === 'image') {
-      setTimeout(() => {
+      setTimeout(async () => {
         if (cancelExportRef.current) return;
-        toPng(node, { 
-          cacheBust: true,
-          pixelRatio: 1,
-          width: 1080,
-          height: 1920,
-          style: {
-            transform: 'none',
-            transformOrigin: 'top left',
-            width: '1080px',
-            height: '1920px'
-          }
-        })
-        .then((dataUrl) => {
-          if (cancelExportRef.current) return;
-          const link = document.createElement('a');
-          link.download = `story-image-${Date.now()}.png`;
-          link.href = dataUrl;
-          link.click();
-          
-          setTimeout(() => {
-            if (cancelExportRef.current) return;
+        try {
+          const totalPics = exportQuantity;
+          setExportTotalVideos(totalPics);
+          setExportCompletedVideos(0);
+          setExportStage('Preparing');
+
+          if (exportQuantity === 1) {
+            setExportCurrentVideoName('image_1.png');
+            setExportProgress(30);
+            setExportStage('Rendering');
+            setBulkExportInfo('Rendering image...');
+            const dataUrl = await toPng(node, { 
+              cacheBust: true,
+              pixelRatio: 1,
+              width: 1080,
+              height: 1920,
+              style: {
+                transform: 'none',
+                transformOrigin: 'top left',
+                width: '1080px',
+                height: '1920px'
+              }
+            });
+            if (cancelExportRef.current) throw new Error('Export cancelled');
+            setExportStage('Encoding');
+            setExportProgress(80);
+            setBulkExportInfo('Triggering download...');
+
+            const link = document.createElement('a');
+            link.download = `story-image-${Date.now()}.png`;
+            link.href = dataUrl;
+            link.click();
+            
+            setExportCompletedVideos(1);
+            setExportStage('Complete');
+            setExportProgress(100);
+            setTimeout(() => {
+              setIsExporting(false);
+              setIsExportModalOpen(false);
+              setExportProgress(0);
+              setBulkExportInfo('');
+              setExportStage('');
+              setExportTotalVideos(0);
+              setExportCompletedVideos(0);
+              setExportCurrentVideoName('');
+            }, 500);
+          } else {
+            // For exportQuantity > 1: Package multiple copies into a ZIP
+            const JSZip = (await import('jszip')).default;
+            const zip = new JSZip();
+            
+            for (let q = 1; q <= exportQuantity; q++) {
+              if (cancelExportRef.current) throw new Error('Export cancelled');
+              setExportCurrentVideoName(`image_${q}.png`);
+              setExportStage('Rendering');
+              setBulkExportInfo(`Processing image ${q} of ${exportQuantity}`);
+              
+              const dataUrl = await toPng(node, { 
+                cacheBust: true,
+                pixelRatio: 1,
+                width: 1080,
+                height: 1920,
+                style: {
+                  transform: 'none',
+                  transformOrigin: 'top left',
+                  width: '1080px',
+                  height: '1920px'
+                }
+              });
+              
+              if (cancelExportRef.current) throw new Error('Export cancelled');
+              
+              const base64Data = dataUrl.replace(/^data:image\/png;base64,/, '');
+              zip.file(`image_${q}.png`, base64Data, { base64: true });
+              
+              setExportCompletedVideos(q);
+              const progress = Math.floor((q / exportQuantity) * 100);
+              setExportProgress(progress);
+              setExportStage(progress < 90 ? 'Rendering' : 'Encoding');
+            }
+            
+            if (cancelExportRef.current) throw new Error('Export cancelled');
+            setExportStage('Creating ZIP');
+            setBulkExportInfo('Generating ZIP file...');
+            const zipBlob = await zip.generateAsync({ type: 'blob' });
+            
+            setExportStage('Complete');
+            const url = URL.createObjectURL(zipBlob);
+            const link = document.createElement('a');
+            link.download = `story-images-quantity-${exportQuantity}-${Date.now()}.zip`;
+            link.href = url;
+            link.click();
+            
             setIsExporting(false);
             setIsExportModalOpen(false);
-          }, 500);
-        })
-        .catch((err) => {
-          console.error('Download failed', err);
+            setExportProgress(0);
+            setBulkExportInfo('');
+            setExportStage('');
+            setExportTotalVideos(0);
+            setExportCompletedVideos(0);
+            setExportCurrentVideoName('');
+          }
+        } catch (err: any) {
+          if (err instanceof Error && err.message === 'Export cancelled') {
+            console.log('Single image export cancelled by user');
+          } else {
+            console.error('Single image export failed', err);
+            alert(`Single image export failed: ${err.message || err}`);
+          }
           setIsExporting(false);
-        });
+          setExportProgress(0);
+          setBulkExportInfo('');
+          setExportStage('');
+          setExportTotalVideos(0);
+          setExportCompletedVideos(0);
+          setExportCurrentVideoName('');
+        }
       }, 500);
     } else {
       const runClientSideVideoDownload = async () => {
         // Client-side Video Export (Pure Browser)
         setExportProgress(0);
+        setExportTotalVideos(exportQuantity);
+        setExportCompletedVideos(0);
+        setExportStage('Preparing');
         setBulkExportInfo('Initializing client-side rendering...');
         
         try {
@@ -2050,41 +2464,107 @@ export default function App() {
 
           const durationValue = (voiceOverUrl && voiceOverDuration > 0) ? voiceOverDuration : exportDuration;
           
-          setBulkExportInfo('Compiling video frames in browser...');
-          const videoBlob = await recordWithFallback(
-            node,
-            durationValue,
-            (progress) => setExportProgress(progress),
-            videoBackground,
-            bgImageOverlay,
-            voiceOverFile && sentenceTimings && sentenceTimings.length > 0 ? sentenceTimings : undefined
-          );
+          if (exportQuantity === 1) {
+            setExportCurrentVideoName('video_1.mp4');
+            setExportStage('Rendering');
+            setBulkExportInfo('Compiling video frames in browser...');
+            const videoBlob = await recordWithFallback(
+              node,
+              durationValue,
+              (progress) => {
+                setExportProgress(progress);
+                setExportStage(progress < 85 ? 'Rendering' : 'Encoding');
+              },
+              videoBackground,
+              bgImageOverlay,
+              voiceOverFile && sentenceTimings && sentenceTimings.length > 0 ? sentenceTimings : undefined
+            );
 
-          if (cancelExportRef.current) return;
+            if (cancelExportRef.current) return;
 
-          setBulkExportInfo('Downloading completed video...');
-          const downloadUrl = URL.createObjectURL(videoBlob);
-          const link = document.createElement('a');
-          link.href = downloadUrl;
-          link.download = `story-render-${Date.now()}.mp4`;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
+            setExportStage('Complete');
+            setExportCompletedVideos(1);
+            setBulkExportInfo('Downloading completed video...');
+            const downloadUrl = URL.createObjectURL(videoBlob);
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            link.download = `story-render-${Date.now()}.mp4`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+          } else {
+            // Multiple copies zipped
+            const JSZip = (await import('jszip')).default;
+            const zip = new JSZip();
+
+            for (let q = 1; q <= exportQuantity; q++) {
+              if (cancelExportRef.current) throw new Error('Export cancelled');
+              setExportCurrentVideoName(`video_${q}.mp4`);
+              setExportStage('Rendering');
+              setBulkExportInfo(`Compiling video ${q} of ${exportQuantity}...`);
+              
+              const videoBlob = await recordWithFallback(
+                node,
+                durationValue,
+                (progress) => {
+                  const overallProgress = Math.floor(((q - 1) * 100 + progress) / exportQuantity);
+                  setExportProgress(overallProgress);
+                  setExportStage(progress < 85 ? 'Rendering' : 'Encoding');
+                },
+                videoBackground,
+                bgImageOverlay,
+                voiceOverFile && sentenceTimings && sentenceTimings.length > 0 ? sentenceTimings : undefined
+              );
+
+              if (cancelExportRef.current) throw new Error('Export cancelled');
+              zip.file(`video_${q}.mp4`, videoBlob);
+              setExportCompletedVideos(q);
+            }
+
+            setExportStage('Creating ZIP');
+            setBulkExportInfo('Wrapping videos into a ZIP archive...');
+            setExportProgress(98);
+            const zipBlob = await zip.generateAsync({ type: 'blob' });
+
+            if (cancelExportRef.current) throw new Error('Export cancelled');
+
+            setExportStage('Complete');
+            setExportProgress(100);
+            const downloadUrl = URL.createObjectURL(zipBlob);
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            link.download = `story-videos-quantity-${exportQuantity}-${Date.now()}.zip`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+          }
 
           // Clean active selection index back to default user preview
           setActiveSentenceIndex(null);
 
-          setIsExporting(false);
-          setIsExportModalOpen(false);
-          setExportProgress(0);
-          setBulkExportInfo('');
+          setTimeout(() => {
+            setIsExporting(false);
+            setIsExportModalOpen(false);
+            setExportProgress(0);
+            setBulkExportInfo('');
+            setExportStage('');
+            setExportTotalVideos(0);
+            setExportCompletedVideos(0);
+            setExportCurrentVideoName('');
+          }, 800);
         } catch (err: any) {
           setActiveSentenceIndex(null);
           console.error('Client-side video export failed:', err);
-          alert(`Client-side video rendering failed: ${err.message || err}`);
+          if (err?.message !== 'Export cancelled') {
+            alert(`Client-side video rendering failed: ${err.message || err}`);
+          }
           setIsExporting(false);
           setExportProgress(0);
           setBulkExportInfo('');
+          setExportStage('');
+          setExportTotalVideos(0);
+          setExportCompletedVideos(0);
+          setExportCurrentVideoName('');
         }
       };
 
@@ -2097,31 +2577,34 @@ export default function App() {
       } else {
         // Server-Side Video Export (FFmpeg on the Server)
         setExportProgress(0);
+        setExportTotalVideos(exportQuantity);
+        setExportCompletedVideos(0);
+        setExportStage('Preparing');
         setBulkExportInfo('Initializing server render...');
       
         setTimeout(async () => {
           if (cancelExportRef.current) return;
           
           try {
-            const formData = new FormData();
-            
-            if (voiceOverFile && sentenceTimings && sentenceTimings.length > 0) {
-              setBulkExportInfo('Rendering voice-over timed offsets...');
-              
-              // Highlight frame overlays sequentially
-              const imageBlobs: { blob: Blob; index: number }[] = [];
-              
-              // Pause any active audio preview playbacks first
-              if (voiceOverAudioRef.current) {
-                voiceOverAudioRef.current.pause();
-                setIsPlayingVoiceOver(false);
-              }
+            // 1. Capture and prepare overlay frames ONCE
+            let cachedBaseImageBlob: Blob | null = null;
+            const cachedHighlightBlobs: { blob: Blob; index: number }[] = [];
+            let cachedSingleImageBlob: Blob | null = null;
 
-              // Capture base image (no active sentence index) to display for entire duration as fallback/underlay
-              setBulkExportInfo('Capturing base frame...');
-              setActiveSentenceIndex(null);
+            // Pause any active audio preview playbacks first
+            if (voiceOverAudioRef.current) {
+              voiceOverAudioRef.current.pause();
+              setIsPlayingVoiceOver(false);
+            }
+
+            if (voiceOverFile && sentenceTimings && sentenceTimings.length > 0) {
+              setBulkExportInfo('Capturing base frame for timeline overlays...');
+              flushSync(() => {
+                setActiveSentenceIndex(null);
+                setVoiceOverPlaybackTime(0);
+              });
               
-              await new Promise((resolve) => setTimeout(resolve, 310));
+              await new Promise((resolve) => setTimeout(resolve, 60));
               
               const baseImgDataUrl = await toPng(node, {
                 cacheBust: true,
@@ -2135,17 +2618,23 @@ export default function App() {
                   height: '1920px'
                 }
               });
-              const baseImageBlob = await fetch(baseImgDataUrl).then((r) => r.blob());
-              formData.append('image_base', baseImageBlob, 'frame-base.png');
+              cachedBaseImageBlob = await fetch(baseImgDataUrl).then((r) => r.blob());
 
-              // Stagger frame snapshotting to allow render synchronization
+              // Capture sequential active subtitles timing frames
               for (let i = 0; i < sentenceTimings.length; i++) {
                 if (cancelExportRef.current) throw new Error('Export cancelled');
                 
-                setBulkExportInfo(`Capturing sentence frame ${i + 1} of ${sentenceTimings.length}`);
-                setActiveSentenceIndex(i);
+                const t = sentenceTimings[i];
+                const midTime = (t.start + t.end) / 2;
+
+                setBulkExportInfo(`Capturing sentence overlay frame ${i + 1} of ${sentenceTimings.length}`);
                 
-                await new Promise((resolve) => setTimeout(resolve, 310));
+                flushSync(() => {
+                  setActiveSentenceIndex(i);
+                  setVoiceOverPlaybackTime(midTime);
+                });
+                
+                await new Promise((resolve) => setTimeout(resolve, 60));
                 
                 const imgDataUrl = await toPng(node, {
                   cacheBust: true,
@@ -2161,30 +2650,16 @@ export default function App() {
                 });
                 
                 const imageBlob = await fetch(imgDataUrl).then((r) => r.blob());
-                imageBlobs.push({ blob: imageBlob, index: i });
+                cachedHighlightBlobs.push({ blob: imageBlob, index: i });
               }
               
-              // Clean active selection index back to default user preview
-              setActiveSentenceIndex(null);
-              
-              // Attach overlays
-              imageBlobs.forEach((item) => {
-                formData.append(`image_${item.index}`, item.blob, `frame-${item.index}.png`);
+              // Restore active selection index back to default user preview
+              flushSync(() => {
+                setActiveSentenceIndex(null);
+                setVoiceOverPlaybackTime(0);
               });
-              
-              // Attach timing offsets list
-              const timingsStr = JSON.stringify(sentenceTimings.map(t => ({
-                start: t.start,
-                end: t.end,
-                index: t.index
-              })));
-              formData.append('timings', timingsStr);
-              
-              // Attach voice-over audio
-              formData.append('voiceover', voiceOverFile);
             } else {
-              // Standard single snapshot mode
-              setBulkExportInfo('Processing single video background overlay...');
+              setBulkExportInfo('Capturing static backdrop overlay...');
               const dataUrl = await toPng(node, { 
                 cacheBust: true,
                 pixelRatio: 1,
@@ -2199,148 +2674,189 @@ export default function App() {
               });
               
               if (cancelExportRef.current) throw new Error('Export cancelled');
-
-              const imageBlob = await fetch(dataUrl).then((r) => r.blob());
-              const imgFile = new File([imageBlob], 'overlay.png', { type: 'image/png' });
-              formData.append('image', imgFile);
+              cachedSingleImageBlob = await fetch(dataUrl).then((r) => r.blob());
             }
 
+            // 2. Fetch external assets ONCE to save memory/bandwidth
+            let bgVideoFile: File | null = null;
             if (videoBackground) {
               try {
+                setBulkExportInfo('Fetching backdrop video parameters...');
                 const videoBlob = await fetch(videoBackground).then((r) => r.blob());
-                const videoFile = new File([videoBlob], 'background.mp4', { type: videoBlob.type || 'video/mp4' });
-                formData.append('video', videoFile);
+                bgVideoFile = new File([videoBlob], 'background.mp4', { type: videoBlob.type || 'video/mp4' });
               } catch (err) {
                 console.error('Failed to prepare background video for server upload:', err);
               }
             }
 
-            if (uploadedMusicFile) {
-              formData.append('audio', uploadedMusicFile);
-            }
+            // 3. Sequential loops to render each required copy
+            const JSZip = (await import('jszip')).default;
+            const zip = new JSZip();
 
-            const durationValue = (voiceOverUrl && voiceOverDuration > 0) ? voiceOverDuration : exportDuration;
-            formData.append('duration', durationValue.toString());
-            formData.append('voiceVolume', voiceVolume.toString());
+            for (let q = 1; q <= exportQuantity; q++) {
+              if (cancelExportRef.current) throw new Error('Export cancelled');
+              setExportCurrentVideoName(`video_${q}.mp4`);
+              setExportStage('Rendering');
+              setBulkExportInfo(`Submitting story sequence copy ${q} of ${exportQuantity}...`);
 
-            const controller = new AbortController();
-            abortControllerRef.current = controller;
+              const pageFormData = new FormData();
 
-            setBulkExportInfo('Uploading to rendering engine...');
-            const response = await fetch(`${apiBaseUrl}/api/render`, {
-              method: 'POST',
-              body: formData,
-              signal: controller.signal,
-              credentials: 'include',
-            });
-
-            const contentType = response.headers.get('content-type') || '';
-            if (contentType.includes('text/html') || !response.ok) {
-              const text = await response.text();
-              if (contentType.includes('text/html')) {
-                const preMatch = text.match(/<pre>([\s\S]*?)<\/pre>/i);
-                const titleMatch = text.match(/<title>([\s\S]*?)<\/title>/i);
-                const bodyMatch = text.match(/<body>([\s\S]*?)<\/body>/i);
-                
-                let extractedError = '';
-                if (preMatch && preMatch[1]) {
-                  extractedError = preMatch[1].trim();
-                } else if (titleMatch && titleMatch[1]) {
-                  extractedError = titleMatch[1].trim();
-                } else if (bodyMatch && bodyMatch[1]) {
-                  extractedError = bodyMatch[1].replace(/<[^>]*>/g, '').trim();
-                } else {
-                  extractedError = text.slice(0, 300).trim();
+              // Append pre-captured frames
+              if (voiceOverFile && sentenceTimings && sentenceTimings.length > 0) {
+                if (cachedBaseImageBlob) {
+                  pageFormData.append('image_base', cachedBaseImageBlob, 'frame-base.png');
                 }
-                throw new Error(`Server Error details: ${extractedError}`);
+                cachedHighlightBlobs.forEach((item) => {
+                  pageFormData.append(`image_${item.index}`, item.blob, `frame-${item.index}.png`);
+                });
+                const timingsStr = JSON.stringify(sentenceTimings.map(t => ({
+                  start: t.start,
+                  end: t.end,
+                  index: t.index
+                })));
+                pageFormData.append('timings', timingsStr);
               } else {
-                try {
-                  const parsed = JSON.parse(text);
-                  throw new Error(parsed.error || `HTTP ${response.status}`);
-                } catch {
-                  throw new Error(`HTTP ${response.status}: ${text.slice(0, 150)}`);
+                if (cachedSingleImageBlob) {
+                  const imgFile = new File([cachedSingleImageBlob], 'overlay.png', { type: 'image/png' });
+                  pageFormData.append('image', imgFile);
                 }
+              }
+
+              if (bgVideoFile) {
+                pageFormData.append('video', bgVideoFile);
+              }
+              if (uploadedMusicFile) {
+                pageFormData.append('audio', uploadedMusicFile);
+              }
+              if (voiceOverFile) {
+                pageFormData.append('voiceover', voiceOverFile);
+              }
+
+              const durationValue = (voiceOverUrl && voiceOverDuration > 0) ? voiceOverDuration : exportDuration;
+              pageFormData.append('duration', durationValue.toString());
+              pageFormData.append('voiceVolume', voiceVolume.toString());
+
+              const controller = new AbortController();
+              abortControllerRef.current = controller;
+
+              // Upload and wait for stream response
+              const response = await fetch(`${apiBaseUrl}/api/render`, {
+                method: 'POST',
+                body: pageFormData,
+                signal: controller.signal,
+                credentials: 'include',
+              });
+
+              const contentType = response.headers.get('content-type') || '';
+              if (contentType.includes('text/html') || !response.ok) {
+                const text = await response.text();
+                throw new Error(`Server call failed with status: ${response.status}. Details: ${text.slice(0, 200)}`);
+              }
+
+              const reader = response.body?.getReader();
+              if (!reader) throw new Error('Server returned unreadable stream context.');
+
+              const decoder = new TextDecoder();
+              let buffer = '';
+              let completedUrl = '';
+
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                if (cancelExportRef.current) {
+                  controller.abort();
+                  throw new Error('Export cancelled');
+                }
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                  if (!line.trim()) continue;
+                  try {
+                    const data = JSON.parse(line);
+                    if (data && data.status === 'rendering') {
+                      const backendProgress = data.progress || 0;
+                      // Update video stage & overall percentage
+                      setExportStage(backendProgress < 90 ? 'Rendering' : 'Encoding');
+                      const overallProgress = Math.floor(((q - 1) * 100 + backendProgress) / exportQuantity);
+                      setExportProgress(overallProgress);
+                      setBulkExportInfo(`Rendering Copy ${q}/${exportQuantity}: ${Math.round(backendProgress)}%`);
+                    } else if (data && data.status === 'completed') {
+                      completedUrl = data.downloadUrl;
+                    } else if (data && data.status === 'error') {
+                      throw new Error(data.error || 'FFmpeg process returned an error');
+                    }
+                  } catch (e: any) {
+                    if (e instanceof Error && (e.message.includes('FFmpeg') || e.message.includes('cancelled'))) {
+                      throw e;
+                    }
+                  }
+                }
+              }
+
+              if (!completedUrl) {
+                throw new Error(`Rendering of copy ${q} completed but no video file path was returned.`);
+              }
+
+              if (exportQuantity === 1) {
+                // Instantly download single video
+                setExportStage('Complete');
+                setExportProgress(100);
+                setExportCompletedVideos(1);
+                
+                const finalTargetUrl = completedUrl.startsWith('http') ? completedUrl : `${apiBaseUrl}${completedUrl}`;
+                const link = document.createElement('a');
+                link.href = finalTargetUrl;
+                link.download = completedUrl.split('/').pop() || 'story-render.mp4';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+              } else {
+                // Download into ZIP
+                setBulkExportInfo(`Saving video ${q} into local zip bundle...`);
+                const targetFetchUrl = completedUrl.startsWith('http') ? completedUrl : `${apiBaseUrl}${completedUrl}`;
+                const videoResponse = await fetch(targetFetchUrl, { credentials: 'include' });
+                if (!videoResponse.ok) {
+                  throw new Error(`Failed to fetch completed video from ${completedUrl}`);
+                }
+                const videoBlob = await videoResponse.blob();
+                zip.file(`video_${q}.mp4`, videoBlob);
+                setExportCompletedVideos(q);
               }
             }
 
-            const reader = response.body?.getReader();
-            if (!reader) throw new Error('ReadableStream processing not supported by your browser.');
+            if (exportQuantity > 1) {
+              setExportStage('Creating ZIP');
+              setBulkExportInfo('Generating ZIP archive containing all video copies...');
+              setExportProgress(98);
+              const zipBlob = await zip.generateAsync({ type: 'blob' });
 
-            const decoder = new TextDecoder();
-            let buffer = '';
-            let completed = false;
-
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              if (cancelExportRef.current) {
-                controller.abort();
-                throw new Error('Export cancelled');
-              }
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split('\n');
-              buffer = lines.pop() || '';
-
-              for (const line of lines) {
-                if (!line.trim()) continue;
-                let data: any = null;
-                try {
-                  if (line.trim().startsWith('<') || line.trim().toLowerCase().includes('html')) {
-                    throw new Error('Server returned HTML instruction instead of streaming data. Check backend logs.');
-                  }
-                  data = JSON.parse(line);
-                } catch (e: any) {
-                  console.warn('Chunk parsing minor warning:', e);
-                  if (e instanceof Error && e.message.includes('Server returned HTML')) {
-                    throw e;
-                  }
-                  continue;
-                }
-
-                if (data && data.status === 'rendering') {
-                  setBulkExportInfo(`Processing video: ${Math.round(data.progress)}%`);
-                  setExportProgress(data.progress);
-                } else if (data && data.status === 'completed') {
-                  completed = true;
-                  setExportProgress(100);
-                  setBulkExportInfo('Completed!');
-                  
-                  const downloadUrl = data.downloadUrl;
-                  if (!downloadUrl) {
-                    throw new Error('Server indicated rendering is complete but failed to provide a valid download URL.');
-                  }
-
-                  console.log('[DEBUG] Frontend successfully received download URL:', downloadUrl);
-                  
-                  const link = document.createElement('a');
-                  link.href = downloadUrl.startsWith('http') ? downloadUrl : `${apiBaseUrl}${downloadUrl}`;
-                  link.download = downloadUrl.split('/').pop() || 'story-render.mp4';
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
-
-                  setTimeout(() => {
-                    setIsExporting(false);
-                    setIsExportModalOpen(false);
-                    setExportProgress(0);
-                    setBulkExportInfo('');
-                  }, 800);
-                  return;
-                } else if (data && data.status === 'error') {
-                  throw new Error(data.error || 'Server rendering process returned an error');
-                }
-              }
+              setExportStage('Complete');
+              setExportProgress(100);
+              const downloadUrl = URL.createObjectURL(zipBlob);
+              const link = document.createElement('a');
+              link.href = downloadUrl;
+              link.download = `story-videos-quantity-${exportQuantity}-${Date.now()}.zip`;
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
             }
 
-            if (!completed) {
-              throw new Error('Connection closed before video rendering could complete.');
-            }
+            setTimeout(() => {
+              setIsExporting(false);
+              setIsExportModalOpen(false);
+              setExportProgress(0);
+              setBulkExportInfo('');
+              setExportStage('');
+              setExportTotalVideos(0);
+              setExportCompletedVideos(0);
+              setExportCurrentVideoName('');
+            }, 800);
+
           } catch (err: any) {
             if (err instanceof Error && err.name === 'AbortError' || err?.message === 'Export cancelled') {
               console.log('Server-side video export cancelled.');
-              setIsExporting(false);
-              setExportProgress(0);
-              setBulkExportInfo('');
             } else {
               console.error('Server-side video export failed:', err);
               const errMsg = String(err?.message || err);
@@ -2353,18 +2869,22 @@ export default function App() {
                 }, 100);
               } else {
                 alert(`Video rendering failed: ${err.message || err}`);
-                setIsExporting(false);
-                setExportProgress(0);
-                setBulkExportInfo('');
               }
             }
+            setIsExporting(false);
+            setExportProgress(0);
+            setBulkExportInfo('');
+            setExportStage('');
+            setExportTotalVideos(0);
+            setExportCompletedVideos(0);
+            setExportCurrentVideoName('');
           } finally {
             abortControllerRef.current = null;
           }
         }, 500);
       }
     }
-}, [previewRef, exportDuration, videoBackground, bgImageOverlay, uploadedMusicFile, voiceOverFile, voiceOverUrl, voiceOverDuration, voiceVolume, sentenceTimings, renderMethod]);
+  }, [previewRef, exportDuration, videoBackground, bgImageOverlay, uploadedMusicFile, voiceOverFile, voiceOverUrl, voiceOverDuration, voiceVolume, sentenceTimings, renderMethod, exportQuantity]);
   
   const handleRandomHighlight = (index?: number) => {
     if (activeTab === 'pictext' && isPicTextBulk && typeof index === 'number') {
@@ -2548,13 +3068,25 @@ export default function App() {
   };
 
   const fonts = [
+    { label: 'Arial', value: 'font-arial' },
+    { label: 'Roboto Condensed', value: 'font-roboto-condensed' },
+    { label: 'Oswald', value: 'font-oswald' },
+    { label: 'Poppins', value: 'font-poppins' },
+    { label: 'Cascadia Mono', value: 'font-cascadia-mono' },
+    { label: 'DM Sans', value: 'font-dm-sans' },
+    { label: 'Archivo', value: 'font-archivo' },
+    { label: 'Noto Serif', value: 'font-noto-serif' },
+    { label: 'Josefin Sans', value: 'font-josefin-sans' },
+    { label: 'Cabin', value: 'font-cabin' },
+    { label: 'IBM Plex Mono', value: 'font-ibm-plex-mono' },
+    { label: 'Unbounded', value: 'font-unbounded' },
+    { label: 'Acme', value: 'font-acme' },
+    { label: 'Comic Neue', value: 'font-comic-neue' },
     { label: 'Roboto', value: 'font-roboto' },
     { label: 'Open Sans', value: 'font-open-sans' },
     { label: 'Lato', value: 'font-lato' },
     { label: 'Source Sans 3', value: 'font-source-sans' },
     { label: 'Nunito', value: 'font-nunito' },
-    { label: 'Poppins', value: 'font-poppins' },
-    { label: 'DM Sans', value: 'font-dm-sans' },
     { label: 'Work Sans', value: 'font-work-sans' },
     { label: 'Merriweather', value: 'font-merriweather' },
     { label: 'Georgia', value: 'font-georgia' },
@@ -2840,6 +3372,64 @@ export default function App() {
                     </div>
                   )}
 
+                  {/* Inline Download Quantity Settings (only if an image format is chosen) */}
+                  {(exportType === 'single_image' || exportType === 'bulk_image') && !isExporting && (
+                    <div className="space-y-4">
+                      <div className="p-4 bg-[#14161b] rounded-xl border border-[#2a2d35]/60 space-y-3 font-sans">
+                        <div className="flex justify-between items-center text-xs font-semibold">
+                          <span className="text-gray-405 text-gray-400">Download Quantity (Copies)</span>
+                          <span className="text-emerald-400 font-mono font-bold text-xs bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">{exportQuantity}x {exportQuantity > 1 ? 'copies' : 'copy'}</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <input 
+                            type="range" 
+                            min="1" 
+                            max="50" 
+                            value={exportQuantity} 
+                            onChange={(e) => setExportQuantity(parseInt(e.target.value) || 1)}
+                            className="flex-1 h-1 bg-[#252c36] rounded-lg appearance-none cursor-pointer accent-emerald-500" 
+                          />
+                          <input 
+                            type="number" 
+                            min="1" 
+                            max="50" 
+                            value={exportQuantity} 
+                            onChange={(e) => {
+                              let val = parseInt(e.target.value);
+                              if (isNaN(val)) val = 1;
+                              if (val < 1) val = 1;
+                              if (val > 50) val = 50;
+                              setExportQuantity(val);
+                            }}
+                            className="w-16 px-2 py-1 bg-[#1c2229] border border-[#2a2d35] rounded-lg text-emerald-400 font-mono text-center font-bold text-xs focus:ring-1 focus:ring-emerald-500/50 outline-none"
+                          />
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {[1, 5, 10, 25, 50].map((num) => (
+                            <button
+                              key={num}
+                              type="button"
+                              onClick={() => setExportQuantity(num)}
+                              className={cn(
+                                "px-2.5 py-1 text-[10px] font-bold rounded cursor-pointer border transition-all",
+                                exportQuantity === num 
+                                  ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/40 shadow-sm animate-pulse" 
+                                  : "bg-[#1c2229] text-gray-400 border-[#2a2d35] hover:text-white hover:bg-[#252c36]"
+                              )}
+                            >
+                              {num} pcs
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-[10px] text-gray-500 font-medium leading-normal">
+                          {exportQuantity > 1 
+                            ? `Will render and process ${exportQuantity} unique snapshots sequentially, then automatically bundle them into a single ZIP file.`
+                            : `Will render a single crisp 1080p full-page PNG file.`}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
                    {/* Inline Duration Settings (only if a video format is chosen) */}
                   {(exportType === 'single_video' || exportType === 'bulk_video') && !isExporting && (
                     <div className="space-y-4">
@@ -2944,6 +3534,110 @@ export default function App() {
                     </button>
                   )}
                 </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Global Export Progress Overlay */}
+      <AnimatePresence>
+        {isExporting && (
+          <div className="fixed inset-0 z-[999999] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="w-full max-w-lg bg-[#141822] rounded-2xl border border-blue-500/30 shadow-[0_0_60px_rgba(59,130,246,0.25)] overflow-hidden text-left p-6 md:p-8 space-y-6"
+            >
+              {/* Header */}
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-blue-500/10 rounded-xl border border-blue-500/25 flex items-center justify-center shrink-0">
+                  <Loader2 size={28} className="animate-spin text-blue-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-lg md:text-xl font-bold text-white tracking-tight flex items-center gap-2">
+                    Rendering & Exporting
+                  </h3>
+                  <p className="text-xs text-gray-400 font-mono mt-1">
+                    Please keep this tab active and open for the best build speed.
+                  </p>
+                </div>
+              </div>
+
+              {/* Progress visualizer */}
+              <div className="space-y-4 bg-[#0a0d14] p-5 rounded-xl border border-[#2a2d35]/60">
+                <div className="flex justify-between items-end">
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest block">
+                      Current Stage
+                    </span>
+                    <span className="text-base font-bold text-white font-sans block leading-none">
+                      {exportStage || 'Rendering'}
+                    </span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[32px] font-extrabold text-white font-mono leading-none tracking-tight">
+                      {exportProgress}%
+                    </span>
+                  </div>
+                </div>
+
+                {/* Main Progress Bar */}
+                <div className="w-full h-3.5 bg-[#171d2b] rounded-full overflow-hidden border border-gray-800 p-[2px]">
+                  <motion.div 
+                    initial={{ width: 0 }}
+                    animate={{ width: `${exportProgress}%` }}
+                    transition={{ duration: 0.3 }}
+                    className="h-full rounded-full bg-gradient-to-r from-blue-500 via-indigo-500 via-purple-500 to-emerald-500 shadow-[0_0_12px_rgba(59,130,246,0.5)]"
+                  />
+                </div>
+
+                {/* Sub status indicators */}
+                <div className="grid grid-cols-2 gap-4 pt-2 border-t border-[#1e222b] text-xs">
+                  <div>
+                    <span className="text-gray-400 font-semibold block mb-0.5">Estimated Remaining</span>
+                    <span className="font-mono text-white font-bold bg-[#141822] px-2.5 py-1 rounded border border-[#2a303c] inline-block mt-0.5 animate-pulse">
+                      {estimatedRemainingText}
+                    </span>
+                  </div>
+                  {exportTotalVideos > 1 && (
+                    <div className="text-right">
+                      <span className="text-gray-400 font-semibold block mb-0.5 font-sans">Batch Progress</span>
+                      <span className="font-mono text-purple-400 font-bold bg-purple-500/10 px-2.5 py-1 rounded border border-purple-500/20 inline-block mt-0.5">
+                        {exportCompletedVideos} / {exportTotalVideos} files
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Current file / Details info */}
+              <div className="space-y-2 text-xs">
+                {exportCurrentVideoName && (
+                  <div className="flex items-center gap-2 bg-[#171d2b]/60 px-3.5 py-2.5 rounded-lg border border-[#2a2d35]/40 text-gray-300">
+                    <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider shrink-0 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded">Active File</span>
+                    <span className="font-mono text-gray-200 truncate font-semibold block flex-1">
+                      {exportCurrentVideoName}
+                    </span>
+                  </div>
+                )}
+                {bulkExportInfo && (
+                  <div className="bg-[#171d2b]/30 px-3.5 py-2.5 rounded-lg border border-[#2a2d35]/20 text-gray-400 whitespace-pre-wrap leading-relaxed italic">
+                    {bulkExportInfo}
+                  </div>
+                )}
+              </div>
+
+              {/* Actions */}
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={handleCancelExport}
+                  className="w-full flex items-center justify-center gap-2 bg-red-600/15 hover:bg-red-600 text-red-400 hover:text-white font-bold py-3.5 rounded-xl border border-red-500/20 hover:border-red-600 transition-all shadow-sm active:scale-[0.98] cursor-pointer"
+                >
+                  <X size={16} /> Cancel Export Process
+                </button>
+              </div>
             </motion.div>
           </div>
         )}
@@ -4390,6 +5084,7 @@ export default function App() {
                                 onClick={() => {
                                   setVoiceOverFile(null);
                                   setVoiceOverUrl(null);
+                                  setVoiceOverBuffer(null);
                                 }}
                                 className="bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20 p-2.5 rounded-lg transition-all flex items-center justify-center"
                                 title="Remove Voice-over"
