@@ -95,17 +95,21 @@ async function startServer() {
   // CORS Middleware for external deployment support (e.g. Vercel)
   app.use((req, res, next) => {
     const origin = req.headers.origin;
-    if (origin === 'https://stories-maker-eight.vercel.app' || origin === 'https://stories-maker-eight.vercel.app/') {
-      res.setHeader('Access-Control-Allow-Origin', 'https://stories-maker-eight.vercel.app');
-    } else if (origin) {
+    if (origin) {
       res.setHeader('Access-Control-Allow-Origin', origin);
     } else {
-      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Origin', 'https://stories-maker-eight.vercel.app');
     }
     
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Origin, X-Requested-With, Accept, Range');
+    
+    const requestedHeaders = req.headers['access-control-request-headers'];
+    if (requestedHeaders) {
+      res.setHeader('Access-Control-Allow-Headers', requestedHeaders);
+    } else {
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Origin, X-Requested-With, Accept, Range');
+    }
     res.setHeader('Access-Control-Expose-Headers', '*');
 
     if (req.method === 'OPTIONS') {
@@ -141,7 +145,7 @@ async function startServer() {
       upload.any()(req, res, async (uploadErr: any) => {
         if (uploadErr) {
           console.error('[DEBUG] Multi-part upload error in render:', uploadErr);
-          return res.status(200).json({ status: 'error', error: `File upload parsing abort: ${uploadErr.message || uploadErr}` });
+          return res.status(200).json({ success: false, status: 'error', error: `File upload parsing abort: ${uploadErr.message || uploadErr}` });
         }
 
         // 1. Log: Export request received
@@ -495,6 +499,8 @@ async function startServer() {
                     status: 'completed',
                     progress: 100,
                     downloadUrl,
+                    success: true,
+                    videoUrl: downloadUrl,
                   }) + '\n'
                 );
               } else {
@@ -605,7 +611,7 @@ async function startServer() {
           if (uploadErr) {
             console.error('[DEBUG] Multi-part upload error in bulk zip:', uploadErr);
             cleanupTempFiles();
-            return res.status(200).json({ status: 'error', error: `File upload parsing abort: ${uploadErr.message || uploadErr}` });
+            return res.status(200).json({ success: false, status: 'error', error: `File upload parsing abort: ${uploadErr.message || uploadErr}` });
           }
 
           // 1. Log: Export request received
@@ -955,6 +961,8 @@ async function startServer() {
                 status: 'completed',
                 progress: 100,
                 downloadUrl,
+                success: true,
+                videoUrl: downloadUrl,
               }) + '\n'
             );
           } else {
