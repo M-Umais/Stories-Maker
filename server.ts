@@ -131,17 +131,18 @@ async function startServer() {
   });
 
   // API Route fallback GET to avoid redirects and HTML responses
-  app.get(['/api/render', '/api/render/'], (req, res) => {
+  const renderGetHandler = (req: any, res: any) => {
     res.status(200).json({
+      success: false,
       status: 'error',
       error: 'Method Not Allowed. Please send a POST request with multi-part metadata to render/export video.'
     });
-  });
+  };
+  app.get('/api/render', renderGetHandler);
+  app.get('/api/render/', renderGetHandler);
 
   // API Route for secure file rendering with FFmpeg (supports both trailing and non-trailing slashes to prevent redirects)
-  app.post(
-    ['/api/render', '/api/render/'],
-    async (req, res) => {
+  const renderPostHandler = async (req: any, res: any) => {
       upload.any()(req, res, async (uploadErr: any) => {
         if (uploadErr) {
           console.error('[DEBUG] Multi-part upload error in render:', uploadErr);
@@ -563,28 +564,30 @@ async function startServer() {
         console.error('[DEBUG] server app /api/render error:', err);
         // Ensure we send structured JSON error instead of standard Express HTML page
         if (!res.headersSent) {
-          res.status(200).json({ status: 'error', error: err.message || err });
+          res.status(200).json({ success: false, status: 'error', error: err.message || err });
         } else {
-          res.write(JSON.stringify({ status: 'error', error: err.message || err }) + '\n');
+          res.write(JSON.stringify({ success: false, status: 'error', error: err.message || err }) + '\n');
           res.end();
         }
       }
-    });
-  }
-);
+      });
+    };
+  app.post('/api/render', renderPostHandler);
+  app.post('/api/render/', renderPostHandler);
 
   // Bulk ZIP rendering API route fallback GET
-  app.get(['/api/render-bulk-zip', '/api/render-bulk-zip/'], (req, res) => {
+  const bulkZipGetHandler = (req: any, res: any) => {
     res.status(200).json({
+      success: false,
       status: 'error',
       error: 'Method Not Allowed. Please send a POST request with multi-part metadata to render bulk zip.'
     });
-  });
+  };
+  app.get('/api/render-bulk-zip', bulkZipGetHandler);
+  app.get('/api/render-bulk-zip/', bulkZipGetHandler);
 
   // Bulk ZIP rendering API route (supports trailing slash)
-  app.post(
-    ['/api/render-bulk-zip', '/api/render-bulk-zip/'],
-    async (req, res, next) => {
+  const bulkZipPostHandler = async (req: any, res: any, next: any) => {
       try {
         upload.any()(req, res, async (uploadErr: any) => {
           const uploadedFiles = req.files as Express.Multer.File[] | undefined || [];
@@ -975,11 +978,12 @@ async function startServer() {
           } catch (err: any) {
             console.error('[DEBUG] Server-side bulk render failed:', err);
             if (!res.headersSent) {
-              res.status(200).json({ status: 'error', error: err.message || err });
+              res.status(200).json({ success: false, status: 'error', error: err.message || err });
             } else {
               try {
                 res.write(
                   JSON.stringify({
+                    success: false,
                     status: 'error',
                     error: err.message || err,
                   }) + '\n'
@@ -996,11 +1000,12 @@ async function startServer() {
       } catch (outerErr: any) {
         console.error('[DEBUG] Outer server-side bulk route err:', outerErr);
         if (!res.headersSent) {
-          res.status(200).json({ status: 'error', error: outerErr.message || outerErr });
+          res.status(200).json({ success: false, status: 'error', error: outerErr.message || outerErr });
         }
       }
-    }
-  );
+    };
+  app.post('/api/render-bulk-zip', bulkZipPostHandler);
+  app.post('/api/render-bulk-zip/', bulkZipPostHandler);
 
   // API route to securely download final file
   app.get('/api/download/:filename', (req, res) => {
