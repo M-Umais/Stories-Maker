@@ -181,6 +181,11 @@ async function startServer() {
         // Parameters
         const duration = parseFloat(req.body.duration || '31') || 31;
         const voiceVolume = parseFloat(req.body.voiceVolume || '1.0') || 1.0;
+        const bgMusicVolume = parseFloat(req.body.bgMusicVolume || '0.15');
+        const isMusicMuted = req.body.isMusicMuted === 'true';
+        const bgVideoVolume = parseFloat(req.body.bgVideoVolume || '1.0');
+        const isBgVideoMuted = req.body.isBgVideoMuted === 'true';
+
         const fps = 30;
         const totalFrames = duration * fps;
 
@@ -321,17 +326,39 @@ async function startServer() {
         });
 
         // Manage mixed audio track
+        const videoHasAudio = videoFile ? hasAudioStream(videoFile.path) : false;
+        console.log('[DEBUG] Background video check: Has audio stream =', videoHasAudio, 'Muted =', isBgVideoMuted);
+
         let hasAudio = false;
-        if (audioInputIdx !== -1 || voiceInputIdx !== -1) {
+        const activeAudioInputs: string[] = [];
+
+        if (videoFile && videoHasAudio && !isBgVideoMuted) {
+          filterComplex += `[0:a]aresample=async=1,volume=${bgVideoVolume}[a_video]; `;
+          activeAudioInputs.push('[a_video]');
+          console.log('[DEBUG] Sound mixing added background video audio at volume', bgVideoVolume);
+        }
+
+        if (audioInputIdx !== -1 && !isMusicMuted) {
+          filterComplex += `[${audioInputIdx}:a]aresample=async=1,volume=${bgMusicVolume}[a_music]; `;
+          activeAudioInputs.push('[a_music]');
+          console.log('[DEBUG] Sound mixing added background music at volume', bgMusicVolume);
+        }
+
+        if (voiceInputIdx !== -1) {
+          filterComplex += `[${voiceInputIdx}:a]aresample=async=1,volume=${voiceVolume}[a_voice]; `;
+          activeAudioInputs.push('[a_voice]');
+          console.log('[DEBUG] Sound mixing added voice-over audio at volume', voiceVolume);
+        }
+
+        if (activeAudioInputs.length > 0) {
           hasAudio = true;
-          if (audioInputIdx !== -1 && voiceInputIdx !== -1) {
-            // Mix standard ambient background music and voice over
-            filterComplex += `[${audioInputIdx}:a]aresample=async=1,volume=0.15[bg_music]; [${voiceInputIdx}:a]aresample=async=1,volume=${voiceVolume}[vo_music]; [bg_music][vo_music]amix=inputs=2:duration=longest[mixed_audio]; `;
-          } else if (audioInputIdx !== -1) {
-            filterComplex += `[${audioInputIdx}:a]aresample=async=1,volume=1.0[mixed_audio]; `;
-          } else if (voiceInputIdx !== -1) {
-            filterComplex += `[${voiceInputIdx}:a]aresample=async=1,volume=${voiceVolume}[mixed_audio]; `;
+          if (activeAudioInputs.length === 1) {
+            filterComplex += `${activeAudioInputs[0]}anull[mixed_audio]; `;
+          } else {
+            const joinInputs = activeAudioInputs.join('');
+            filterComplex += `${joinInputs}amix=inputs=${activeAudioInputs.length}:duration=longest[mixed_audio]; `;
           }
+          console.log('[DEBUG] Audio stream mapped correctly: Inputs =', activeAudioInputs.join(', '), 'Destination = [mixed_audio]');
         }
 
         // 5. Clean, sanitize and optimize complex filter to prevent empty filter segments and trailing semicolons
@@ -619,6 +646,10 @@ async function startServer() {
         const pageCount = parseInt(req.body.page_count || '0');
         const duration = parseFloat(req.body.duration || '5') || 5;
         const voiceVolume = parseFloat(req.body.voiceVolume || '1.0') || 1.0;
+        const bgMusicVolume = parseFloat(req.body.bgMusicVolume || '0.15');
+        const isMusicMuted = req.body.isMusicMuted === 'true';
+        const bgVideoVolume = parseFloat(req.body.bgVideoVolume || '1.0');
+        const isBgVideoMuted = req.body.isBgVideoMuted === 'true';
 
         const zip = new JSZip();
 
@@ -737,17 +768,40 @@ async function startServer() {
             }
           });
 
+          // Manage mixed audio track
+          const videoHasAudio = videoFile ? hasAudioStream(videoFile.path) : false;
+          console.log(`[DEBUG] Page ${p + 1} background video check: Has audio stream =`, videoHasAudio, 'Muted =', isBgVideoMuted);
+
           let hasAudio = false;
-          if (audioInputIdx !== -1 || voiceInputIdx !== -1) {
+          const activeAudioInputs: string[] = [];
+
+          if (videoFile && videoHasAudio && !isBgVideoMuted) {
+            filterComplex += `[0:a]aresample=async=1,volume=${bgVideoVolume}[a_video]; `;
+            activeAudioInputs.push('[a_video]');
+            console.log(`[DEBUG] Page ${p + 1} sound mixing added background video audio at volume`, bgVideoVolume);
+          }
+
+          if (audioInputIdx !== -1 && !isMusicMuted) {
+            filterComplex += `[${audioInputIdx}:a]aresample=async=1,volume=${bgMusicVolume}[a_music]; `;
+            activeAudioInputs.push('[a_music]');
+            console.log(`[DEBUG] Page ${p + 1} sound mixing added background music at volume`, bgMusicVolume);
+          }
+
+          if (voiceInputIdx !== -1) {
+            filterComplex += `[${voiceInputIdx}:a]aresample=async=1,volume=${voiceVolume}[a_voice]; `;
+            activeAudioInputs.push('[a_voice]');
+            console.log(`[DEBUG] Page ${p + 1} sound mixing added voice-over audio at volume`, voiceVolume);
+          }
+
+          if (activeAudioInputs.length > 0) {
             hasAudio = true;
-            if (audioInputIdx !== -1 && voiceInputIdx !== -1) {
-              // Mix standard ambient background music and voice over
-              filterComplex += `[${audioInputIdx}:a]aresample=async=1,volume=0.15[bg_music]; [${voiceInputIdx}:a]aresample=async=1,volume=${voiceVolume}[vo_music]; [bg_music][vo_music]amix=inputs=2:duration=longest[mixed_audio]; `;
-            } else if (audioInputIdx !== -1) {
-              filterComplex += `[${audioInputIdx}:a]aresample=async=1,volume=1.0[mixed_audio]; `;
-            } else if (voiceInputIdx !== -1) {
-              filterComplex += `[${voiceInputIdx}:a]aresample=async=1,volume=${voiceVolume}[mixed_audio]; `;
+            if (activeAudioInputs.length === 1) {
+              filterComplex += `${activeAudioInputs[0]}anull[mixed_audio]; `;
+            } else {
+              const joinInputs = activeAudioInputs.join('');
+              filterComplex += `${joinInputs}amix=inputs=${activeAudioInputs.length}:duration=longest[mixed_audio]; `;
             }
+            console.log(`[DEBUG] Page ${p + 1} audio stream mapped correctly: Inputs =`, activeAudioInputs.join(', '), 'Destination = [mixed_audio]');
           }
 
           const cleanedFilterComplex = filterComplex

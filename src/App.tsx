@@ -1185,11 +1185,16 @@ export default function App() {
   const [videoBackground, setVideoBackground] = useState<string | null>(null);
   const [previousBgStyle, setPreviousBgStyle] = useState<'solid' | 'gradient' | 'image' | null>(null);
 
+  // Background Video Audio States
+  const [isBgVideoMuted, setIsBgVideoMuted] = useState<boolean>(false);
+  const [bgVideoVolume, setBgVideoVolume] = useState<number>(0.5);
+
   // Music State
   const [uploadedMusicFile, setUploadedMusicFile] = useState<File | null>(null);
   const [uploadedMusicUrl, setUploadedMusicUrl] = useState<string | null>(null);
   const [uploadedMusicBuffer, setUploadedMusicBuffer] = useState<AudioBuffer | null>(null);
   const [isMusicMuted, setIsMusicMuted] = useState<boolean>(false);
+  const [bgMusicVolume, setBgMusicVolume] = useState<number>(0.15);
   const [isMusicDecoding, setIsMusicDecoding] = useState<boolean>(false);
 
   // Music Input Ref and Audio Playback Tag Ref
@@ -1280,6 +1285,7 @@ export default function App() {
   useEffect(() => {
     if (audioElementRef.current) {
       if (uploadedMusicUrl && !isMusicMuted && !isExporting) {
+        audioElementRef.current.volume = bgMusicVolume;
         audioElementRef.current.play().catch(err => {
           console.log('Autoplay blocked. Pressing play after click will work.', err);
         });
@@ -1287,7 +1293,7 @@ export default function App() {
         audioElementRef.current.pause();
       }
     }
-  }, [uploadedMusicUrl, isMusicMuted, isExporting]);
+  }, [uploadedMusicUrl, isMusicMuted, isExporting, bgMusicVolume]);
 
   const handleVoiceOverUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -2059,6 +2065,10 @@ export default function App() {
 
           pageFormData.append('duration', pageDuration.toString());
           pageFormData.append('voiceVolume', voiceVolume.toString());
+          pageFormData.append('bgMusicVolume', bgMusicVolume.toString());
+          pageFormData.append('isMusicMuted', isMusicMuted.toString());
+          pageFormData.append('bgVideoVolume', bgVideoVolume.toString());
+          pageFormData.append('isBgVideoMuted', isBgVideoMuted.toString());
 
           const controller = new AbortController();
           abortControllerRef.current = controller;
@@ -2735,6 +2745,10 @@ export default function App() {
               const durationValue = (voiceOverUrl && voiceOverDuration > 0) ? voiceOverDuration : exportDuration;
               pageFormData.append('duration', durationValue.toString());
               pageFormData.append('voiceVolume', voiceVolume.toString());
+              pageFormData.append('bgMusicVolume', bgMusicVolume.toString());
+              pageFormData.append('isMusicMuted', isMusicMuted.toString());
+              pageFormData.append('bgVideoVolume', bgVideoVolume.toString());
+              pageFormData.append('isBgVideoMuted', isBgVideoMuted.toString());
 
               const controller = new AbortController();
               abortControllerRef.current = controller;
@@ -3108,6 +3122,7 @@ export default function App() {
     footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor,
     bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly, removePaddingWhenHidden,
     videoBackground, isExporting, boldParagraphIndex,
+    isBgVideoMuted, bgVideoVolume,
     storyImage, storyImageHeight, storyImageRadius, storyImageFit, imagePosition,
     sentenceTimings,
     activeSentenceIndex,
@@ -4839,6 +4854,43 @@ export default function App() {
                         <Film size={16} /> {videoBackground ? 'CHANGE CARD VIDEO' : 'UPLOAD CARD VIDEO'}
                       </button>
                       {videoBackground && (
+                        <div className="p-3 bg-[#2a2d35]/30 rounded-xl border border-[#353941]/40 space-y-3 mt-1.5 mb-1.5">
+                          <div className="flex items-center justify-between text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                            <span>Video Sound Settings</span>
+                            <span className="text-purple-400 font-extrabold">{isBgVideoMuted ? "MUTED" : `${Math.round(bgVideoVolume * 100)}%`}</span>
+                          </div>
+
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-gray-400">Mute Video Audio</span>
+                            <div 
+                              onClick={() => setIsBgVideoMuted(!isBgVideoMuted)}
+                              className={cn("w-10 h-5 rounded-full relative cursor-pointer transition-colors", isBgVideoMuted ? "bg-red-500" : "bg-green-500")}
+                            >
+                              <div className={cn("absolute top-1 w-3 h-3 bg-white rounded-full transition-all", isBgVideoMuted ? "left-6" : "left-1")}></div>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="flex justify-between items-center text-[9px] text-gray-500 uppercase tracking-widest font-mono">
+                              <span>Volume Control</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0"
+                              max="1"
+                              step="0.01"
+                              value={bgVideoVolume}
+                              disabled={isBgVideoMuted}
+                              onChange={(e) => setBgVideoVolume(parseFloat(e.target.value))}
+                              className="w-full h-1 bg-[#1a1d23] outline-none rounded-lg appearance-none cursor-pointer accent-purple-500 transition-all disabled:opacity-40"
+                              style={{
+                                background: `linear-gradient(to right, #a855f7 ${bgVideoVolume * 100}%, #1a1d23 0%)`
+                              }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                      {videoBackground && (
                         <button 
                           onClick={() => {
                             setVideoBackground(null);
@@ -5258,14 +5310,15 @@ export default function App() {
                       )}
 
                       {/* VOLUME MIXER */}
-                      <div className="space-y-1.5 border-t border-[#2a2d35]/30 pt-3">
+                      <div className="space-y-4 border-t border-[#2a2d35]/30 pt-3">
                         <div className="flex justify-between items-center text-[10px] font-bold text-gray-500 uppercase tracking-widest">
                           <span>Volume Mixer</span>
                         </div>
                         
-                        <div className="space-y-1.5 pt-1">
+                        {/* 1. Voice Over */}
+                        <div className="space-y-1.5">
                           <div className="flex justify-between items-center text-[10px]">
-                            <span className="text-gray-400 font-medium">Voice Over (Preview & Export)</span>
+                            <span className="text-gray-400 font-medium font-sans">Voice Over (Preview & Export)</span>
                             <span className="text-indigo-400 font-extrabold font-mono">{Math.round(voiceVolume * 100)}%</span>
                           </div>
                           <div className="flex items-center gap-2">
@@ -5276,9 +5329,91 @@ export default function App() {
                               step="0.01"
                               value={voiceVolume}
                               onChange={(e) => setVoiceVolume(parseFloat(e.target.value))}
-                              className="w-full h-1 bg-[#1a1d23] outline-none rounded-lg appearance-none cursor-pointer accent-indigo-500 transition-all"
+                              className="w-full h-1 bg-[#1a1d23] outline-none rounded-lg appearance-none cursor-pointer accent-indigo-500 transition-all font-sans"
                               style={{
                                 background: `linear-gradient(to right, #4f46e5 ${voiceVolume * 100}%, #1a1d23 0%)`
+                              }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* 2. Background Music */}
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between items-center text-[10px]">
+                            <span className="text-gray-400 font-medium flex items-center gap-1 font-sans">
+                              Background Music
+                              {isMusicMuted && <span className="text-[9px] text-red-500 font-semibold font-mono font-sans">(MUTED)</span>}
+                            </span>
+                            <span className="text-emerald-400 font-extrabold font-mono">{Math.round(bgMusicVolume * 100)}%</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => setIsMusicMuted(!isMusicMuted)}
+                              className={cn(
+                                "p-1.5 rounded-lg border text-xs transition-colors flex-shrink-0",
+                                isMusicMuted 
+                                  ? "bg-red-500/10 text-red-400 border-red-500/20" 
+                                  : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
+                              )}
+                              title={isMusicMuted ? "Unmute Music" : "Mute Music"}
+                            >
+                              {isMusicMuted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+                            </button>
+                            <input
+                              type="range"
+                              min="0"
+                              max="1"
+                              step="0.01"
+                              value={bgMusicVolume}
+                              onChange={(e) => setBgMusicVolume(parseFloat(e.target.value))}
+                              className="w-full h-1 bg-[#1a1d23] outline-none rounded-lg appearance-none cursor-pointer accent-emerald-500 transition-all"
+                              style={{
+                                background: `linear-gradient(to right, #10b981 ${bgMusicVolume * 100}%, #1a1d23 0%)`
+                              }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* 3. Background Video Sound */}
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between items-center text-[10px]">
+                            <span className="text-gray-400 font-medium flex items-center gap-1 font-sans">
+                              Background Video Sound
+                              {(!videoBackground) ? (
+                                <span className="text-[9px] text-gray-500 font-sans">(No video)</span>
+                              ) : isBgVideoMuted ? (
+                                <span className="text-[9px] text-red-500 font-semibold font-mono font-sans">(MUTED)</span>
+                              ) : (
+                                <span className="text-[9px] text-indigo-400 font-semibold font-mono font-sans">(ACTIVE)</span>
+                              )}
+                            </span>
+                            <span className="text-indigo-400 font-extrabold font-mono">{Math.round(bgVideoVolume * 100)}%</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => setIsBgVideoMuted(!isBgVideoMuted)}
+                              disabled={!videoBackground}
+                              className={cn(
+                                "p-1.5 rounded-lg border text-xs transition-colors flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed",
+                                isBgVideoMuted 
+                                  ? "bg-red-500/10 text-red-400 border-red-500/20" 
+                                  : "bg-indigo-500/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-500/20"
+                              )}
+                              title={isBgVideoMuted ? "Unmute Video Audio" : "Mute Video Audio"}
+                            >
+                              {isBgVideoMuted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+                            </button>
+                            <input
+                              type="range"
+                              min="0"
+                              max="1"
+                              step="0.01"
+                              value={bgVideoVolume}
+                              disabled={!videoBackground}
+                              onChange={(e) => setBgVideoVolume(parseFloat(e.target.value))}
+                              className="w-full h-1 bg-[#1a1d23] outline-none rounded-lg appearance-none cursor-pointer accent-indigo-500 transition-all disabled:opacity-40"
+                              style={{
+                                background: `linear-gradient(to right, #4f46e5 ${bgVideoVolume * 100}%, #1a1d23 0%)`
                               }}
                             />
                           </div>
@@ -6404,6 +6539,7 @@ function Poster({
   footerFontSize, footerText, renderStoryText, showCard, footerBorderWidth, footerBorderColor,
   bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly, hColor, removePaddingWhenHidden,
   videoBackground, isExporting, boldParagraphIndex,
+  isBgVideoMuted, bgVideoVolume,
   storyImage, storyImageHeight, storyImageRadius, storyImageFit, isPicTextMode,
   boxHighlight, imagePosition,
   sentenceTimings, activeSentenceIndex, voiceOverHighlightColor, voiceOverHighlightMode, voiceOverDimInactive,
@@ -6896,10 +7032,15 @@ function Poster({
               <video 
                 src={videoBackground} 
                 autoPlay 
-                muted 
+                muted={isBgVideoMuted} 
                 loop 
                 playsInline
                 className="absolute inset-0 w-full h-full object-cover"
+                ref={(el) => {
+                  if (el) {
+                    el.volume = bgVideoVolume;
+                  }
+                }}
               />
               <div 
                 className="absolute inset-0 z-10" 
