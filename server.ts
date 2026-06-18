@@ -95,15 +95,19 @@ async function startServer() {
   // CORS Middleware for external deployment support (e.g. Vercel)
   app.use((req, res, next) => {
     const origin = req.headers.origin;
-    if (origin) {
+    if (origin === 'https://stories-maker-eight.vercel.app' || origin === 'https://stories-maker-eight.vercel.app/') {
+      res.setHeader('Access-Control-Allow-Origin', 'https://stories-maker-eight.vercel.app');
+    } else if (origin) {
       res.setHeader('Access-Control-Allow-Origin', origin);
     } else {
       res.setHeader('Access-Control-Allow-Origin', '*');
     }
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, PATCH, DELETE');
-    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, Range');
     
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Origin, X-Requested-With, Accept, Range');
+    res.setHeader('Access-Control-Expose-Headers', '*');
+
     if (req.method === 'OPTIONS') {
       return res.status(200).end();
     }
@@ -122,14 +126,22 @@ async function startServer() {
     res.json({ status: 'ok' });
   });
 
-  // API Route for secure file rendering with FFmpeg
+  // API Route fallback GET to avoid redirects and HTML responses
+  app.get(['/api/render', '/api/render/'], (req, res) => {
+    res.status(200).json({
+      status: 'error',
+      error: 'Method Not Allowed. Please send a POST request with multi-part metadata to render/export video.'
+    });
+  });
+
+  // API Route for secure file rendering with FFmpeg (supports both trailing and non-trailing slashes to prevent redirects)
   app.post(
-    '/api/render',
+    ['/api/render', '/api/render/'],
     async (req, res) => {
       upload.any()(req, res, async (uploadErr: any) => {
         if (uploadErr) {
           console.error('[DEBUG] Multi-part upload error in render:', uploadErr);
-          return res.status(400).json({ status: 'error', error: `File upload parsing abort: ${uploadErr.message || uploadErr}` });
+          return res.status(200).json({ status: 'error', error: `File upload parsing abort: ${uploadErr.message || uploadErr}` });
         }
 
         // 1. Log: Export request received
@@ -545,7 +557,7 @@ async function startServer() {
         console.error('[DEBUG] server app /api/render error:', err);
         // Ensure we send structured JSON error instead of standard Express HTML page
         if (!res.headersSent) {
-          res.status(500).json({ status: 'error', error: err.message || err });
+          res.status(200).json({ status: 'error', error: err.message || err });
         } else {
           res.write(JSON.stringify({ status: 'error', error: err.message || err }) + '\n');
           res.end();
@@ -555,9 +567,17 @@ async function startServer() {
   }
 );
 
-  // Bulk ZIP rendering API route
+  // Bulk ZIP rendering API route fallback GET
+  app.get(['/api/render-bulk-zip', '/api/render-bulk-zip/'], (req, res) => {
+    res.status(200).json({
+      status: 'error',
+      error: 'Method Not Allowed. Please send a POST request with multi-part metadata to render bulk zip.'
+    });
+  });
+
+  // Bulk ZIP rendering API route (supports trailing slash)
   app.post(
-    '/api/render-bulk-zip',
+    ['/api/render-bulk-zip', '/api/render-bulk-zip/'],
     async (req, res, next) => {
       try {
         upload.any()(req, res, async (uploadErr: any) => {
@@ -585,7 +605,7 @@ async function startServer() {
           if (uploadErr) {
             console.error('[DEBUG] Multi-part upload error in bulk zip:', uploadErr);
             cleanupTempFiles();
-            return res.status(400).json({ status: 'error', error: `File upload parsing abort: ${uploadErr.message || uploadErr}` });
+            return res.status(200).json({ status: 'error', error: `File upload parsing abort: ${uploadErr.message || uploadErr}` });
           }
 
           // 1. Log: Export request received
@@ -947,7 +967,7 @@ async function startServer() {
           } catch (err: any) {
             console.error('[DEBUG] Server-side bulk render failed:', err);
             if (!res.headersSent) {
-              res.status(500).json({ status: 'error', error: err.message || err });
+              res.status(200).json({ status: 'error', error: err.message || err });
             } else {
               try {
                 res.write(
@@ -968,7 +988,7 @@ async function startServer() {
       } catch (outerErr: any) {
         console.error('[DEBUG] Outer server-side bulk route err:', outerErr);
         if (!res.headersSent) {
-          res.status(500).json({ status: 'error', error: outerErr.message || outerErr });
+          res.status(200).json({ status: 'error', error: outerErr.message || outerErr });
         }
       }
     }
@@ -999,7 +1019,9 @@ async function startServer() {
   app.use((err: any, req: any, res: any, next: any) => {
     console.error('[DEBUG] Unhandled error:', err);
     if (!res.headersSent) {
-      res.status(err.status || 500).json({ status: 'error', error: err.message || 'An internal server error occurred' });
+      const isRenderEndpoint = req.originalUrl && (req.originalUrl.includes('/api/render') || req.originalUrl.includes('/api/render-bulk-zip'));
+      const status = isRenderEndpoint ? 200 : (err.status || 500);
+      res.status(status).json({ status: 'error', error: err.message || 'An internal server error occurred' });
     }
   });
 

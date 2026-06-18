@@ -2077,7 +2077,6 @@ export default function App() {
             method: 'POST',
             body: pageFormData,
             signal: controller.signal,
-            credentials: 'include',
           });
 
           const contentType = response.headers.get('content-type') || '';
@@ -2134,7 +2133,7 @@ export default function App() {
           setExportStage('Encoding');
           setBulkExportInfo(`Downloading Page ${p + 1} Copy ${q} video into zip bundle...`);
           const targetFetchUrl = completedUrl.startsWith('http') ? completedUrl : `${apiBaseUrl}${completedUrl}`;
-          const videoResponse = await fetch(targetFetchUrl, { credentials: 'include' });
+          const videoResponse = await fetch(targetFetchUrl);
           if (!videoResponse.ok) {
             throw new Error(`Failed to fetch completed video from ${completedUrl}`);
           }
@@ -2202,7 +2201,11 @@ export default function App() {
             setExportCurrentVideoName('');
           }
         } else {
-          alert(`Bulk video rendering failed: ${err.message || err}`);
+          let customMsg = err.message || err;
+          if (String(customMsg).includes('Failed to fetch')) {
+            customMsg = `${customMsg}. This typically indicates a cross-origin security block or that your API server connection configuration is incorrect/inactive.\n\nPlease click "⚙️ Server Config" in the top right to verify that the Backend API Base URL matches your active Cloud Run server URL:\n\nhttps://ais-pre-kqidtxvhxcpuwsh2z475fd-268595849564.asia-southeast1.run.app`;
+          }
+          alert(`Bulk video rendering failed: ${customMsg}`);
           setIsExporting(false);
           setExportProgress(0);
           setBulkExportInfo('');
@@ -2758,7 +2761,6 @@ export default function App() {
                 method: 'POST',
                 body: pageFormData,
                 signal: controller.signal,
-                credentials: 'include',
               });
 
               const contentType = response.headers.get('content-type') || '';
@@ -2830,7 +2832,7 @@ export default function App() {
                 // Download into ZIP
                 setBulkExportInfo(`Saving video ${q} into local zip bundle...`);
                 const targetFetchUrl = completedUrl.startsWith('http') ? completedUrl : `${apiBaseUrl}${completedUrl}`;
-                const videoResponse = await fetch(targetFetchUrl, { credentials: 'include' });
+                const videoResponse = await fetch(targetFetchUrl);
                 if (!videoResponse.ok) {
                   throw new Error(`Failed to fetch completed video from ${completedUrl}`);
                 }
@@ -2882,7 +2884,11 @@ export default function App() {
                   runClientSideVideoDownload();
                 }, 100);
               } else {
-                alert(`Video rendering failed: ${err.message || err}`);
+                let customMsg = err.message || err;
+                if (String(customMsg).includes('Failed to fetch')) {
+                  customMsg = `${customMsg}. This typically indicates a cross-origin security block or that your API server connection configuration is incorrect/inactive.\n\nPlease click "⚙️ Server Config" in the top right to verify that the Backend API Base URL matches your active Cloud Run server URL:\n\nhttps://ais-pre-kqidtxvhxcpuwsh2z475fd-268595849564.asia-southeast1.run.app`;
+                }
+                alert(`Video rendering failed: ${customMsg}`);
               }
             }
             setIsExporting(false);
