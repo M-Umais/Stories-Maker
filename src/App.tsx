@@ -3247,9 +3247,9 @@ export default function App() {
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="w-full max-w-md bg-[#161a20] rounded-xl border border-[#2a2d35] shadow-2xl overflow-hidden text-left"
+              className="w-full max-w-md bg-[#161a20] rounded-xl border border-[#2a2d35] shadow-2xl overflow-hidden text-left flex flex-col max-h-[90vh]"
             >
-              <div className="flex items-center justify-between p-4 border-b border-[#2a2d35]">
+              <div className="flex items-center justify-between p-4 border-b border-[#2a2d35] flex-shrink-0">
                 <div className="flex items-center gap-2">
                   <div className="w-5 h-5 bg-white text-black text-[10px] font-bold flex items-center justify-center rounded">V</div>
                   <h2 className="text-sm font-bold tracking-tight">Export Story</h2>
@@ -3259,296 +3259,300 @@ export default function App() {
                 </button>
               </div>
 
-                <div className="p-6 space-y-6">
-                  <div>
-                    <h3 className="text-xl font-bold mb-1">Export Story</h3>
-                    <p className="text-sm text-gray-400">Choose your download format</p>
-                  </div>
+              {/* Scrollable Middle Content */}
+              <div className="p-6 space-y-6 overflow-y-auto flex-1 scrollbar-thin scrollbar-thumb-gray-700">
+                <div>
+                  <h3 className="text-xl font-bold mb-1">Export Story</h3>
+                  <p className="text-sm text-gray-400">Choose your download format</p>
+                </div>
 
-                  {/* Options List */}
-                  <div className="space-y-4">
-                    {/* PNG Option */}
-                    <div 
-                      onClick={() => !isExporting && setExportType('single_image')}
-                      className={cn(
-                        "flex items-center gap-4 p-4 rounded-xl border cursor-pointer transition-all group text-left relative",
-                        exportType === 'single_image' 
-                          ? "border-blue-500 bg-blue-500/5 ring-1 ring-blue-500/30" 
-                          : "border-[#2a2d35] bg-[#1c2229] hover:bg-[#252c36]",
-                        isExporting && "opacity-50 cursor-not-allowed"
-                      )}
-                    >
-                      <div className="w-10 h-10 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
-                        <ImageIcon size={20} className="text-blue-400" />
-                      </div>
-                      <div className="flex-1">
-                        <h4 className={cn("text-sm font-bold", exportType === 'single_image' && "text-blue-400")}>Image (PNG)</h4>
-                        <p className="text-xs text-gray-400">Single 1080p Full HD photo snapshot</p>
-                      </div>
-                      <div className="w-4 h-4 rounded-full border border-gray-500 flex items-center justify-center p-0.5 shrink-0">
-                        {exportType === 'single_image' && <div className="w-full h-full rounded-full bg-blue-400" />}
-                      </div>
-                    </div>
-
-                    {/* Video Option */}
-                    <div 
-                      onClick={() => !isExporting && setExportType('single_video')}
-                      className={cn(
-                        "flex items-center gap-4 p-4 rounded-xl border cursor-pointer transition-all group text-left relative",
-                        exportType === 'single_video' 
-                          ? "border-blue-500 bg-blue-500/5 ring-1 ring-blue-500/30" 
-                          : "border-[#2a2d35] bg-[#1c2229] hover:bg-[#252c36]",
-                        isExporting && "opacity-50 cursor-not-allowed"
-                      )}
-                    >
-                      <div className="w-10 h-10 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
-                        <Film size={20} className="text-blue-400" />
-                      </div>
-                      <div className="flex-1">
-                        <h4 className={cn("text-sm font-bold", exportType === 'single_video' && "text-blue-400")}>Single Video (MP4)</h4>
-                        <p className="text-xs text-gray-400">Render active story with animations & audio</p>
-                      </div>
-                      <div className="w-4 h-4 rounded-full border border-gray-500 flex items-center justify-center p-0.5 shrink-0">
-                        {exportType === 'single_video' && <div className="w-full h-full rounded-full bg-blue-400" />}
-                      </div>
-                    </div>
-
-                    {(isBulkMode || (activeTab === 'pictext' && isPicTextBulk)) && (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {/* Bulk Video Option */}
-                        <div 
-                          onClick={() => !isExporting && setExportType('bulk_video')}
-                          className={cn(
-                            "p-4 rounded-xl border relative overflow-hidden text-left cursor-pointer transition-all group flex flex-col justify-between h-full",
-                            exportType === 'bulk_video' 
-                              ? "border-purple-500 bg-purple-500/5 ring-1 ring-purple-500/30" 
-                              : "border-[#2a2d35] bg-[#1c2229] hover:bg-[#252c36]",
-                            isExporting && "opacity-50 cursor-not-allowed"
-                          )}
-                        >
-                          <div className="flex items-start justify-between w-full gap-2 mb-2">
-                            <div className="w-10 h-10 rounded-lg bg-purple-500/10 border border-purple-500/25 flex items-center justify-center shrink-0">
-                              <PlusCircle size={20} className="text-purple-400" />
-                            </div>
-                            <div className="w-4 h-4 rounded-full border border-gray-500 flex items-center justify-center p-0.5 shrink-0 mt-1">
-                              {exportType === 'bulk_video' && <div className="w-full h-full rounded-full bg-purple-400" />}
-                            </div>
-                          </div>
-                          <div>
-                            <h4 className={cn("font-bold text-sm leading-tight text-purple-400")}>Bulk Download Video (ZIP)</h4>
-                            <p className="text-[11px] text-gray-400 leading-tight mt-1">Render all {activeTab === 'pictext' ? picTextBulkStories.filter(s => s.text.trim().length > 0 || s.image).length : bulkStories.filter(s => s.text.trim().length > 0).length} stories to a ZIP file</p>
-                          </div>
-                        </div>
-
-                        {/* Bulk Image Option */}
-                        <div 
-                          onClick={() => !isExporting && setExportType('bulk_image')}
-                          className={cn(
-                            "p-4 rounded-xl border relative overflow-hidden text-left cursor-pointer transition-all group flex flex-col justify-between h-full",
-                            exportType === 'bulk_image' 
-                              ? "border-emerald-500 bg-emerald-500/5 ring-1 ring-emerald-500/30" 
-                              : "border-[#2a2d35] bg-[#1c2229] hover:bg-[#252c36]",
-                            isExporting && "opacity-50 cursor-not-allowed"
-                          )}
-                        >
-                          <div className="flex items-start justify-between w-full gap-2 mb-2">
-                            <div className="w-10 h-10 rounded-lg bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center shrink-0">
-                              <ImageIcon size={20} className="text-emerald-400" />
-                            </div>
-                            <div className="w-4 h-4 rounded-full border border-gray-500 flex items-center justify-center p-0.5 shrink-0 mt-1">
-                              {exportType === 'bulk_image' && <div className="w-full h-full rounded-full bg-emerald-400" />}
-                            </div>
-                          </div>
-                          <div>
-                            <h4 className={cn("font-bold text-sm leading-tight text-emerald-400")}>Bulk Download Images (ZIP)</h4>
-                            <p className="text-[11px] text-gray-400 leading-tight mt-1">Export all {activeTab === 'pictext' ? picTextBulkStories.filter(s => s.text.trim().length > 0 || s.image).length : bulkStories.filter(s => s.text.trim().length > 0).length} pages as image ZIP</p>
-                          </div>
-                        </div>
-                      </div>
+                {/* Options List */}
+                <div className="space-y-4">
+                  {/* PNG Option */}
+                  <div 
+                    onClick={() => !isExporting && setExportType('single_image')}
+                    className={cn(
+                      "flex items-center gap-4 p-4 rounded-xl border cursor-pointer transition-all group text-left relative",
+                      exportType === 'single_image' 
+                        ? "border-blue-500 bg-blue-500/5 ring-1 ring-blue-500/30" 
+                        : "border-[#2a2d35] bg-[#1c2229] hover:bg-[#252c36]",
+                      isExporting && "opacity-50 cursor-not-allowed"
                     )}
+                  >
+                    <div className="w-10 h-10 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                      <ImageIcon size={20} className="text-blue-400" />
+                    </div>
+                    <div className="flex-1">
+                      <h4 className={cn("text-sm font-bold", exportType === 'single_image' && "text-blue-400")}>Image (PNG)</h4>
+                      <p className="text-xs text-gray-400">Single 1080p Full HD photo snapshot</p>
+                    </div>
+                    <div className="w-4 h-4 rounded-full border border-gray-500 flex items-center justify-center p-0.5 shrink-0">
+                      {exportType === 'single_image' && <div className="w-full h-full rounded-full bg-blue-400" />}
+                    </div>
                   </div>
 
-                  {/* Progress overlay if currently running */}
-                  {isExporting && (
-                    <div className="p-4 rounded-xl bg-[#14161b] border border-[#2a2d35] space-y-3">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-blue-400 font-bold uppercase tracking-wider animate-pulse flex items-center gap-1.5">
-                          <Loader2 size={12} className="animate-spin" />
-                          {bulkExportInfo || "Exporting..."}
-                        </span>
-                        <span className="font-mono text-gray-400 font-bold">{exportProgress}%</span>
-                      </div>
-                      <div className="w-full h-1.5 bg-[#252c36] rounded-full overflow-hidden">
-                        <div 
-                          className="h-full bg-gradient-to-r from-blue-500 via-purple-500 to-emerald-500 transition-all duration-300 animate-pulse"
-                          style={{ width: `${exportProgress}%` }}
-                        />
-                      </div>
+                  {/* Video Option */}
+                  <div 
+                    onClick={() => !isExporting && setExportType('single_video')}
+                    className={cn(
+                      "flex items-center gap-4 p-4 rounded-xl border cursor-pointer transition-all group text-left relative",
+                      exportType === 'single_video' 
+                        ? "border-blue-500 bg-blue-500/5 ring-1 ring-blue-500/30" 
+                        : "border-[#2a2d35] bg-[#1c2229] hover:bg-[#252c36]",
+                      isExporting && "opacity-50 cursor-not-allowed"
+                    )}
+                  >
+                    <div className="w-10 h-10 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                      <Film size={20} className="text-blue-400" />
                     </div>
-                  )}
-
-                  {/* Inline Download Quantity Settings (only if an image format is chosen) */}
-                  {(exportType === 'single_image' || exportType === 'bulk_image') && !isExporting && (
-                    <div className="space-y-4">
-                      <div className="p-4 bg-[#14161b] rounded-xl border border-[#2a2d35]/60 space-y-3 font-sans">
-                        <div className="flex justify-between items-center text-xs font-semibold">
-                          <span className="text-gray-405 text-gray-400">Download Quantity (Copies)</span>
-                          <span className="text-emerald-400 font-mono font-bold text-xs bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">{exportQuantity}x {exportQuantity > 1 ? 'copies' : 'copy'}</span>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <input 
-                            type="range" 
-                            min="1" 
-                            max="50" 
-                            value={exportQuantity} 
-                            onChange={(e) => setExportQuantity(parseInt(e.target.value) || 1)}
-                            className="flex-1 h-1 bg-[#252c36] rounded-lg appearance-none cursor-pointer accent-emerald-500" 
-                          />
-                          <input 
-                            type="number" 
-                            min="1" 
-                            max="50" 
-                            value={exportQuantity} 
-                            onChange={(e) => {
-                              let val = parseInt(e.target.value);
-                              if (isNaN(val)) val = 1;
-                              if (val < 1) val = 1;
-                              if (val > 50) val = 50;
-                              setExportQuantity(val);
-                            }}
-                            className="w-16 px-2 py-1 bg-[#1c2229] border border-[#2a2d35] rounded-lg text-emerald-400 font-mono text-center font-bold text-xs focus:ring-1 focus:ring-emerald-500/50 outline-none"
-                          />
-                        </div>
-                        <div className="flex flex-wrap gap-1.5 pt-1">
-                          {[1, 5, 10, 25, 50].map((num) => (
-                            <button
-                              key={num}
-                              type="button"
-                              onClick={() => setExportQuantity(num)}
-                              className={cn(
-                                "px-2.5 py-1 text-[10px] font-bold rounded cursor-pointer border transition-all",
-                                exportQuantity === num 
-                                  ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/40 shadow-sm animate-pulse" 
-                                  : "bg-[#1c2229] text-gray-400 border-[#2a2d35] hover:text-white hover:bg-[#252c36]"
-                              )}
-                            >
-                              {num} pcs
-                            </button>
-                          ))}
-                        </div>
-                        <p className="text-[10px] text-gray-500 font-medium leading-normal">
-                          {exportQuantity > 1 
-                            ? `Will render and process ${exportQuantity} unique snapshots sequentially, then automatically bundle them into a single ZIP file.`
-                            : `Will render a single crisp 1080p full-page PNG file.`}
-                        </p>
-                      </div>
+                    <div className="flex-1">
+                      <h4 className={cn("text-sm font-bold", exportType === 'single_video' && "text-blue-400")}>Single Video (MP4)</h4>
+                      <p className="text-xs text-gray-400">Render active story with animations & audio</p>
                     </div>
-                  )}
+                    <div className="w-4 h-4 rounded-full border border-gray-500 flex items-center justify-center p-0.5 shrink-0">
+                      {exportType === 'single_video' && <div className="w-full h-full rounded-full bg-blue-400" />}
+                    </div>
+                  </div>
 
-                   {/* Inline Duration Settings (only if a video format is chosen) */}
-                  {(exportType === 'single_video' || exportType === 'bulk_video') && !isExporting && (
-                    <div className="space-y-4">
-                      {/* Duration Settings */}
-                      <div className="p-4 bg-[#14161b] rounded-xl border border-[#2a2d35]/60 space-y-3">
-                        <div className="flex justify-between items-center text-xs font-semibold">
-                          <span className="text-gray-400">Video Duration per Page</span>
-                          <span className="text-blue-400 font-mono">{exportDuration}s</span>
-                        </div>
-                        <input 
-                          type="range" 
-                          min="5" 
-                          max="90" 
-                          value={exportDuration} 
-                          onChange={(e) => setExportDuration(parseInt(e.target.value))}
-                          disabled={isExporting}
-                          className="w-full h-1 bg-[#252c36] rounded-lg appearance-none cursor-pointer accent-blue-500" 
-                        />
-                        <div className="flex justify-between text-[10px] text-gray-500 font-medium">
-                          <span>5s</span>
-                          <span>1m 30s</span>
-                        </div>
-                      </div>
-
-                      {/* Rendering Engine Selector */}
-                      <div className="p-4 bg-[#14161b] rounded-xl border border-[#2a2d35]/60 space-y-3">
-                        <div className="flex flex-col gap-1 text-left">
-                          <span className="text-xs font-semibold text-gray-400">Rendering Engine</span>
-                          <p className="text-[11px] text-gray-500 leading-tight">Choose high-speed client-side rendering or cloud-native server rendering</p>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 bg-[#0c0d10] p-1 rounded-lg border border-[#2a2d35]/30">
-                          <button
-                            type="button"
-                            onClick={() => setRenderMethod('client')}
-                            className={cn(
-                              "py-1.5 px-3 text-xs font-bold rounded-md transition-all cursor-pointer",
-                              renderMethod === 'client'
-                                ? "bg-blue-600 text-white shadow"
-                                : "text-gray-400 hover:text-white"
-                            )}
-                          >
-                            ⚡ Client-Side Render
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setRenderMethod('server')}
-                            className={cn(
-                              "py-1.5 px-3 text-xs font-bold rounded-md transition-all cursor-pointer",
-                              renderMethod === 'server'
-                                ? "bg-blue-600 text-white shadow"
-                                : "text-gray-400 hover:text-white"
-                            )}
-                          >
-                            ☁️ Server-Side Render
-                          </button>
-                        </div>
-                        {renderMethod === 'client' ? (
-                          <div className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1">
-                            <span>✓ Bypasses browser/iframe cookie blocks. Highly recommended.</span>
-                          </div>
-                        ) : (
-                          <div className="text-[10px] text-yellow-500 font-semibold flex items-center gap-1">
-                            <span>⚠ Sensitive to third-party cookie restrictions in preview frames.</span>
-                          </div>
+                  {(isBulkMode || (activeTab === 'pictext' && isPicTextBulk)) && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Bulk Video Option */}
+                      <div 
+                        onClick={() => !isExporting && setExportType('bulk_video')}
+                        className={cn(
+                          "p-4 rounded-xl border relative overflow-hidden text-left cursor-pointer transition-all group flex flex-col justify-between h-full",
+                          exportType === 'bulk_video' 
+                            ? "border-purple-500 bg-purple-500/5 ring-1 ring-purple-500/30" 
+                            : "border-[#2a2d35] bg-[#1c2229] hover:bg-[#252c36]",
+                          isExporting && "opacity-50 cursor-not-allowed"
                         )}
+                      >
+                        <div className="flex items-start justify-between w-full gap-2 mb-2">
+                          <div className="w-10 h-10 rounded-lg bg-purple-500/10 border border-purple-500/25 flex items-center justify-center shrink-0">
+                            <PlusCircle size={20} className="text-purple-400" />
+                          </div>
+                          <div className="w-4 h-4 rounded-full border border-gray-500 flex items-center justify-center p-0.5 shrink-0 mt-1">
+                            {exportType === 'bulk_video' && <div className="w-full h-full rounded-full bg-purple-400" />}
+                          </div>
+                        </div>
+                        <div>
+                          <h4 className={cn("font-bold text-sm leading-tight text-purple-400")}>Bulk Download Video (ZIP)</h4>
+                          <p className="text-[11px] text-gray-400 leading-tight mt-1">Render all {activeTab === 'pictext' ? picTextBulkStories.filter(s => s.text.trim().length > 0 || s.image).length : bulkStories.filter(s => s.text.trim().length > 0).length} stories to a ZIP file</p>
+                        </div>
+                      </div>
+
+                      {/* Bulk Image Option */}
+                      <div 
+                        onClick={() => !isExporting && setExportType('bulk_image')}
+                        className={cn(
+                          "p-4 rounded-xl border relative overflow-hidden text-left cursor-pointer transition-all group flex flex-col justify-between h-full",
+                          exportType === 'bulk_image' 
+                            ? "border-emerald-500 bg-emerald-500/5 ring-1 ring-emerald-500/30" 
+                            : "border-[#2a2d35] bg-[#1c2229] hover:bg-[#252c36]",
+                          isExporting && "opacity-50 cursor-not-allowed"
+                        )}
+                      >
+                        <div className="flex items-start justify-between w-full gap-2 mb-2">
+                          <div className="w-10 h-10 rounded-lg bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center shrink-0">
+                            <ImageIcon size={20} className="text-emerald-400" />
+                          </div>
+                          <div className="w-4 h-4 rounded-full border border-gray-500 flex items-center justify-center p-0.5 shrink-0 mt-1">
+                            {exportType === 'bulk_image' && <div className="w-full h-full rounded-full bg-emerald-400" />}
+                          </div>
+                        </div>
+                        <div>
+                          <h4 className={cn("font-bold text-sm leading-tight text-emerald-400")}>Bulk Download Images (ZIP)</h4>
+                          <p className="text-[11px] text-gray-400 leading-tight mt-1">Export all {activeTab === 'pictext' ? picTextBulkStories.filter(s => s.text.trim().length > 0 || s.image).length : bulkStories.filter(s => s.text.trim().length > 0).length} pages as image ZIP</p>
+                        </div>
                       </div>
                     </div>
-                  )}
-
-                  {isExporting ? (
-                    <button 
-                      onClick={handleCancelExport}
-                      className="w-full flex items-center justify-center gap-2 bg-red-600 hover:bg-red-500 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98]"
-                    >
-                      <X size={18} /> Cancel Export
-                    </button>
-                  ) : (
-                    <button 
-                      onClick={() => {
-                        if (exportType === 'single_image') {
-                          handleDownload('image');
-                        } else if (exportType === 'single_video') {
-                          handleDownload('video');
-                        } else if (exportType === 'bulk_image') {
-                          handleBulkImageDownload();
-                        } else if (exportType === 'bulk_video') {
-                          handleBulkDownload();
-                        }
-                      }}
-                      className={cn(
-                        "w-full flex items-center justify-center gap-2 font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98]",
-                        exportType === 'bulk_video' ? "bg-purple-500 hover:bg-purple-400 text-white" :
-                        exportType === 'bulk_image' ? "bg-emerald-500 hover:bg-emerald-400 text-white" :
-                        "bg-[#8ab4f8] hover:bg-[#a1c2fa] text-black"
-                      )}
-                    >
-                      <Download size={18} /> 
-                      {exportType === 'single_image' && "Export Single Image (PNG)"}
-                      {exportType === 'single_video' && "Export Single Video"}
-                      {exportType === 'bulk_image' && "Export All Stories to Images (ZIP)"}
-                      {exportType === 'bulk_video' && "Export All Stories to Videos (ZIP)"}
-                    </button>
                   )}
                 </div>
+
+                {/* Inline Download Quantity Settings (only if an image format is chosen) */}
+                {(exportType === 'single_image' || exportType === 'bulk_image') && !isExporting && (
+                  <div className="space-y-4">
+                    <div className="p-4 bg-[#14161b] rounded-xl border border-[#2a2d35]/60 space-y-3 font-sans">
+                      <div className="flex justify-between items-center text-xs font-semibold">
+                        <span className="text-gray-405 text-gray-400">Download Quantity (Copies)</span>
+                        <span className="text-emerald-400 font-mono font-bold text-xs bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">{exportQuantity}x {exportQuantity > 1 ? 'copies' : 'copy'}</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <input 
+                          type="range" 
+                          min="1" 
+                          max="50" 
+                          value={exportQuantity} 
+                          onChange={(e) => setExportQuantity(parseInt(e.target.value) || 1)}
+                          className="flex-1 h-1 bg-[#252c36] rounded-lg appearance-none cursor-pointer accent-emerald-500" 
+                        />
+                        <input 
+                          type="number" 
+                          min="1" 
+                          max="50" 
+                          value={exportQuantity} 
+                          onChange={(e) => {
+                            let val = parseInt(e.target.value);
+                            if (isNaN(val)) val = 1;
+                            if (val < 1) val = 1;
+                            if (val > 50) val = 50;
+                            setExportQuantity(val);
+                          }}
+                          className="w-16 px-2 py-1 bg-[#1c2229] border border-[#2a2d35] rounded-lg text-emerald-400 font-mono text-center font-bold text-xs focus:ring-1 focus:ring-emerald-500/50 outline-none"
+                        />
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {[1, 5, 10, 25, 50].map((num) => (
+                          <button
+                            key={num}
+                            type="button"
+                            onClick={() => setExportQuantity(num)}
+                            className={cn(
+                              "px-2.5 py-1 text-[10px] font-bold rounded cursor-pointer border transition-all",
+                              exportQuantity === num 
+                                ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/40 shadow-sm animate-pulse" 
+                                : "bg-[#1c2229] text-gray-400 border-[#2a2d35] hover:text-white hover:bg-[#252c36]"
+                            )}
+                          >
+                            {num} pcs
+                          </button>
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-gray-500 font-medium leading-normal">
+                        {exportQuantity > 1 
+                          ? `Will render and process ${exportQuantity} unique snapshots sequentially, then automatically bundle them into a single ZIP file.`
+                          : `Will render a single crisp 1080p full-page PNG file.`}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Inline Duration Settings (only if a video format is chosen) */}
+                {(exportType === 'single_video' || exportType === 'bulk_video') && !isExporting && (
+                  <div className="space-y-4">
+                    {/* Duration Settings */}
+                    <div className="p-4 bg-[#14161b] rounded-xl border border-[#2a2d35]/60 space-y-3">
+                      <div className="flex justify-between items-center text-xs font-semibold">
+                        <span className="text-gray-400">Video Duration per Page</span>
+                        <span className="text-blue-400 font-mono">{exportDuration}s</span>
+                      </div>
+                      <input 
+                        type="range" 
+                        min="5" 
+                        max="90" 
+                        value={exportDuration} 
+                        onChange={(e) => setExportDuration(parseInt(e.target.value))}
+                        disabled={isExporting}
+                        className="w-full h-1 bg-[#252c36] rounded-lg appearance-none cursor-pointer accent-blue-500" 
+                      />
+                      <div className="flex justify-between text-[10px] text-gray-500 font-medium">
+                        <span>5s</span>
+                        <span>1m 30s</span>
+                      </div>
+                    </div>
+
+                    {/* Rendering Engine Selector */}
+                    <div className="p-4 bg-[#14161b] rounded-xl border border-[#2a2d35]/60 space-y-3">
+                      <div className="flex flex-col gap-1 text-left">
+                        <span className="text-xs font-semibold text-gray-400">Rendering Engine</span>
+                        <p className="text-[11px] text-gray-500 leading-tight">Choose high-speed client-side rendering or cloud-native server rendering</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 bg-[#0c0d10] p-1 rounded-lg border border-[#2a2d35]/30">
+                        <button
+                          type="button"
+                          onClick={() => setRenderMethod('client')}
+                          className={cn(
+                            "py-1.5 px-3 text-xs font-bold rounded-md transition-all cursor-pointer",
+                            renderMethod === 'client'
+                              ? "bg-blue-600 text-white shadow"
+                              : "text-gray-400 hover:text-white"
+                          )}
+                        >
+                          ⚡ Client-Side Render
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRenderMethod('server')}
+                          className={cn(
+                            "py-1.5 px-3 text-xs font-bold rounded-md transition-all cursor-pointer",
+                            renderMethod === 'server'
+                              ? "bg-blue-600 text-white shadow"
+                              : "text-gray-400 hover:text-white"
+                          )}
+                        >
+                          ☁️ Server-Side Render
+                        </button>
+                      </div>
+                      {renderMethod === 'client' ? (
+                        <div className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1">
+                          <span>✓ Bypasses browser/iframe cookie blocks. Highly recommended.</span>
+                        </div>
+                      ) : (
+                        <div className="text-[10px] text-yellow-500 font-semibold flex items-center gap-1">
+                          <span>⚠ Sensitive to third-party cookie restrictions in preview frames.</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Fixed Footer with Button and Progress Indicator */}
+              <div className="p-4 border-t border-[#2a2d35] bg-[#161a20] flex-shrink-0 space-y-4">
+                {/* Progress overlay if currently running */}
+                {isExporting && (
+                  <div className="p-4 rounded-xl bg-[#14161b] border border-[#2a2d35] space-y-3">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-blue-400 font-bold uppercase tracking-wider animate-pulse flex items-center gap-1.5">
+                        <Loader2 size={12} className="animate-spin" />
+                        {bulkExportInfo || "Exporting..."}
+                      </span>
+                      <span className="font-mono text-gray-400 font-bold">{exportProgress}%</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-[#252c36] rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-gradient-to-r from-blue-500 via-purple-500 to-emerald-500 transition-all duration-300 animate-pulse"
+                        style={{ width: `${exportProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {isExporting ? (
+                  <button 
+                    onClick={handleCancelExport}
+                    className="w-full flex items-center justify-center gap-2 bg-red-600 hover:bg-red-500 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98]"
+                  >
+                    <X size={18} /> Cancel Export
+                  </button>
+                ) : (
+                  <button 
+                    onClick={() => {
+                      if (exportType === 'single_image') {
+                        handleDownload('image');
+                      } else if (exportType === 'single_video') {
+                        handleDownload('video');
+                      } else if (exportType === 'bulk_image') {
+                        handleBulkImageDownload();
+                      } else if (exportType === 'bulk_video') {
+                        handleBulkDownload();
+                      }
+                    }}
+                    className={cn(
+                      "w-full flex items-center justify-center gap-2 font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-[0.98]",
+                      exportType === 'bulk_video' ? "bg-purple-500 hover:bg-purple-400 text-white" :
+                      exportType === 'bulk_image' ? "bg-emerald-500 hover:bg-emerald-400 text-white" :
+                      "bg-[#8ab4f8] hover:bg-[#a1c2fa] text-black"
+                    )}
+                  >
+                    <Download size={18} /> 
+                    {exportType === 'single_image' && "Export Single Image (PNG)"}
+                    {exportType === 'single_video' && "Export Single Video"}
+                    {exportType === 'bulk_image' && "Export All Stories to Images (ZIP)"}
+                    {exportType === 'bulk_video' && "Export All Stories to Videos (ZIP)"}
+                  </button>
+                )}
+              </div>
             </motion.div>
           </div>
         )}

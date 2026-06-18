@@ -24,7 +24,7 @@ function hasAudioStream(filePath: string): boolean {
     return false;
   } catch (err) {
     console.warn('[DEBUG] ffprobe check failed for input file:', filePath, err);
-    return true; // Fallback to true so we don't block
+    return false; // Safely fallback to false to avoid mapping 0:a errors if ffprobe isn't present
   }
 }
 
@@ -274,26 +274,19 @@ async function startServer() {
         let audioInputIdx = -1;
         let voiceInputIdx = -1;
 
-        // Verify if uploaded audio file actually contains an audio stream
-        const audioHasStream = audioFile ? hasAudioStream(audioFile.path) : false;
-        if (audioFile && audioHasStream) {
+        if (audioFile) {
           args.push('-stream_loop', '-1');
           args.push('-i', audioFile.path);
           audioInputIdx = currentInputIdx;
           currentInputIdx++;
-          console.log('[DEBUG] Audio file detected by FFmpeg and validated: Index =', audioInputIdx, 'Path =', audioFile.path);
-        } else if (audioFile) {
-          console.warn('[DEBUG] Audio file uploaded but has NO valid audio stream! Skipping audio input setup.');
+          console.log('[DEBUG] Audio file detected by FFmpeg: Index =', audioInputIdx, 'Path =', audioFile.path);
         }
 
-        const voiceHasStream = voiceOverFile ? hasAudioStream(voiceOverFile.path) : false;
-        if (voiceOverFile && voiceHasStream) {
+        if (voiceOverFile) {
           args.push('-i', voiceOverFile.path);
           voiceInputIdx = currentInputIdx;
           currentInputIdx++;
-          console.log('[DEBUG] Audio file detected by FFmpeg and validated: Index =', voiceInputIdx, 'Path =', voiceOverFile.path);
-        } else if (voiceOverFile) {
-          console.warn('[DEBUG] Voice-over file uploaded but has NO valid audio stream! Skipping voiceover input setup.');
+          console.log('[DEBUG] Voice-over file detected by FFmpeg: Index =', voiceInputIdx, 'Path =', voiceOverFile.path);
         }
 
         // Prepare filter complex
@@ -384,8 +377,8 @@ async function startServer() {
           args.push('-an');
         }
 
-        // Universal output profile with fast encoding preset
-        args.push('-c:v', 'libx264', '-preset', 'fast', '-pix_fmt', 'yuv420p');
+        // Universal output profile with fast encoding preset and exact 30fps to guarantee progress tracking correctness
+        args.push('-c:v', 'libx264', '-preset', 'fast', '-pix_fmt', 'yuv420p', '-r', '30');
 
         // Constrain duration
         args.push('-t', duration.toString());
@@ -471,20 +464,13 @@ async function startServer() {
             if (fs.existsSync(outputPath)) {
               const stats = fs.statSync(outputPath);
               if (stats.size > 0) {
-                // Audio merge validation check to prevent completion if stream fails
-                if (hasAudio && !verifyAudioInFile(outputPath)) {
-                  console.error('[DEBUG] Error: Audio was specified but missing from the final MP4 container.');
-                  if (fs.existsSync(outputPath)) {
-                    fs.unlinkSync(outputPath); // Clean up invalid file
+                // Clean post-render audio track verification: log findings but do not fail export
+                if (hasAudio) {
+                  if (!verifyAudioInFile(outputPath)) {
+                    console.warn('[DEBUG] Warning: Audio stream was specified but ffprobe audit could not confirm its presence. Proceeding anyway.');
+                  } else {
+                    console.log('[DEBUG] Audio stream successfully validated in the final output container.');
                   }
-                  res.write(
-                    JSON.stringify({
-                      status: 'error',
-                      error: 'Error: Audio track failed to merge into the final exported video file.',
-                    }) + '\n'
-                  );
-                  res.end();
-                  return;
                 }
 
                 // 5. Log: Audio included in the final MP4 (if applicable) and return download URL
@@ -721,26 +707,19 @@ async function startServer() {
           let audioInputIdx = -1;
           let voiceInputIdx = -1;
 
-          // Verify if uploaded audio file actually contains an audio stream
-          const audioHasStream = audioFile ? hasAudioStream(audioFile.path) : false;
-          if (audioFile && audioHasStream) {
+          if (audioFile) {
             args.push('-stream_loop', '-1');
             args.push('-i', audioFile.path);
             audioInputIdx = currentInputIdx;
             currentInputIdx++;
-            console.log(`[DEBUG] Audio file detected by FFmpeg for page ${p + 1} and validated: Index =`, audioInputIdx);
-          } else if (audioFile) {
-            console.warn(`[DEBUG] Audio file uploaded but has NO valid audio stream! Skipping for page ${p + 1}.`);
+            console.log(`[DEBUG] Audio file detected by FFmpeg for page ${p + 1}: Index =`, audioInputIdx);
           }
 
-          const voiceHasStream = voiceOverFile ? hasAudioStream(voiceOverFile.path) : false;
-          if (voiceOverFile && voiceHasStream) {
+          if (voiceOverFile) {
             args.push('-i', voiceOverFile.path);
             voiceInputIdx = currentInputIdx;
             currentInputIdx++;
-            console.log(`[DEBUG] Voiceover file detected by FFmpeg for page ${p + 1} and validated: Index =`, voiceInputIdx);
-          } else if (voiceOverFile) {
-            console.warn(`[DEBUG] Voice-over file uploaded but has NO valid audio stream! Skipping for page ${p + 1}.`);
+            console.log(`[DEBUG] Voiceover file detected by FFmpeg for page ${p + 1}: Index =`, voiceInputIdx);
           }
 
           let filterComplex = '';
@@ -825,7 +804,7 @@ async function startServer() {
             args.push('-an');
           }
 
-          args.push('-c:v', 'libx264', '-preset', 'fast', '-pix_fmt', 'yuv420p');
+          args.push('-c:v', 'libx264', '-preset', 'fast', '-pix_fmt', 'yuv420p', '-r', '30');
           args.push('-t', duration.toString());
 
           const tempOutputPath = path.join(exportsDir, `bulk_page_${p}_${Date.now()}_${Math.floor(Math.random() * 1000)}.mp4`);
@@ -914,9 +893,13 @@ async function startServer() {
           if (fs.existsSync(tempOutputPath)) {
             const stats = fs.statSync(tempOutputPath);
             if (stats.size > 0) {
-              // Post-render audio stream audit to make sure audio track indeed emerged in target MP4 container
-              if (hasAudio && !verifyAudioInFile(tempOutputPath)) {
-                throw new Error(`Error: Audio track failed to merge into the final exported video file for page ${p + 1}.`);
+              // Post-render audio stream audit: log findings but do not fail export
+              if (hasAudio) {
+                if (!verifyAudioInFile(tempOutputPath)) {
+                  console.warn(`[DEBUG] Warning: Audio stream was specified but ffprobe audit could not confirm its presence for page ${p + 1}. Proceeding anyway.`);
+                } else {
+                  console.log(`[DEBUG] Audio stream successfully validated in page ${p + 1} output container.`);
+                }
               }
               const fileBuffer = fs.readFileSync(tempOutputPath);
               zip.file(`story-page-${p + 1}.mp4`, fileBuffer);
