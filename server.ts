@@ -95,21 +95,17 @@ async function startServer() {
   // CORS Middleware for external deployment support (e.g. Vercel)
   app.use((req, res, next) => {
     const origin = req.headers.origin;
-    if (origin) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
+    // Always permit the Vercel frontend origin, or fallback to it
+    if (origin && (origin === 'https://stories-maker-eight.vercel.app' || origin === 'https://stories-maker-eight.vercel.app/')) {
+      res.setHeader('Access-Control-Allow-Origin', 'https://stories-maker-eight.vercel.app');
     } else {
+      // Direct requirement: Allow origin: https://stories-maker-eight.vercel.app
       res.setHeader('Access-Control-Allow-Origin', 'https://stories-maker-eight.vercel.app');
     }
     
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    
-    const requestedHeaders = req.headers['access-control-request-headers'];
-    if (requestedHeaders) {
-      res.setHeader('Access-Control-Allow-Headers', requestedHeaders);
-    } else {
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Origin, X-Requested-With, Accept, Range');
-    }
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     res.setHeader('Access-Control-Expose-Headers', '*');
 
     if (req.method === 'OPTIONS') {
@@ -157,15 +153,44 @@ async function startServer() {
           uploadedFiles: uploadedFiles.map(f => ({ fieldname: f.fieldname, originalname: f.originalname, size: f.size }))
         });
 
+        let sendDirectJson = false;
+        const sendUpdate = (data: any) => {
+          if (sendDirectJson) return;
+          res.write(JSON.stringify(data) + '\n');
+        };
+        const sendFinal = (statusCode: number, data: any) => {
+          if (sendDirectJson) {
+            if (!res.headersSent) {
+              res.status(statusCode).json(data);
+            }
+          } else {
+            res.write(JSON.stringify(data) + '\n');
+            res.end();
+          }
+        };
+
         try {
           // Periodic cleanup trigger
           runTemporaryCleanup();
 
-          // Configure SSE-like chunked stream for real-time progress updates
-          res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-          res.setHeader('Transfer-Encoding', 'chunked');
-          res.setHeader('X-Content-Type-Options', 'nosniff');
-          res.setHeader('X-Accel-Buffering', 'no');
+          // Identify if the request wants a direct/single JSON response instead of a chunked stream
+          // Vercel frontend or any JSON-expecting APIs
+          const origin = req.headers.origin;
+          const isVercel = origin === 'https://stories-maker-eight.vercel.app' || origin === 'https://stories-maker-eight.vercel.app/';
+          const acceptsJson = req.headers.accept && req.headers.accept.includes('application/json');
+          const isCustomApiCall = (req.headers['content-type'] && req.headers['content-type'].includes('application/json')) || (req.body && req.body.directJson === 'true');
+
+          sendDirectJson = isVercel || acceptsJson || isCustomApiCall;
+
+          if (sendDirectJson) {
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          } else {
+            // Configure SSE-like chunked stream for real-time progress updates
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            res.setHeader('Transfer-Encoding', 'chunked');
+            res.setHeader('X-Content-Type-Options', 'nosniff');
+            res.setHeader('X-Accel-Buffering', 'no');
+          }
 
         // Extract uploaded files safely
         const videoFile = uploadedFiles.find((f) => f.fieldname === 'video');
@@ -416,13 +441,11 @@ async function startServer() {
         } catch (spawnError: any) {
           cleanupTempFiles();
           console.error('[DEBUG] Failed to spawn FFmpeg process:', spawnError);
-          res.write(
-            JSON.stringify({
-              status: 'error',
-              error: `Failed to invoke FFmpeg binary on the server: ${spawnError.message || spawnError}`,
-            }) + '\n'
-          );
-          res.end();
+          sendFinal(200, {
+            success: false,
+            status: 'error',
+            error: `Failed to invoke FFmpeg binary on the server: ${spawnError.message || spawnError}`,
+          });
           return;
         }
 
@@ -440,7 +463,7 @@ async function startServer() {
                 const progress = Math.min(99, Math.round((frameVal / totalFrames) * 100));
                 if (progress > lastProgress) {
                   lastProgress = progress;
-                  res.write(JSON.stringify({ status: 'rendering', progress }) + '\n');
+                  sendUpdate({ status: 'rendering', progress });
                 }
               }
             }
@@ -459,7 +482,7 @@ async function startServer() {
               const progress = Math.min(99, Math.round((frameVal / totalFrames) * 100));
               if (progress > lastProgress) {
                 lastProgress = progress;
-                res.write(JSON.stringify({ status: 'rendering', progress }) + '\n');
+                sendUpdate({ status: 'rendering', progress });
               }
             }
           }
@@ -495,32 +518,28 @@ async function startServer() {
                   console.log('[DEBUG] Audio included in the final MP4');
                 }
                 console.log('[DEBUG] Download URL returned to frontend:', downloadUrl);
-                res.write(
-                  JSON.stringify({
-                    status: 'completed',
-                    progress: 100,
-                    downloadUrl,
-                    success: true,
-                    videoUrl: downloadUrl,
-                  }) + '\n'
-                );
+                sendFinal(200, {
+                  status: 'completed',
+                  progress: 100,
+                  downloadUrl,
+                  success: true,
+                  videoUrl: downloadUrl,
+                });
               } else {
                 console.error('[DEBUG] Error: Generated MP4 file is empty (0 bytes).');
-                res.write(
-                  JSON.stringify({
-                    status: 'error',
-                    error: 'Generated video file is empty',
-                  }) + '\n'
-                );
+                sendFinal(200, {
+                  success: false,
+                  status: 'error',
+                  error: 'Generated video file is empty',
+                });
               }
             } else {
               console.error('[DEBUG] Error: Generated MP4 file is not found on disk.');
-              res.write(
-                JSON.stringify({
-                  status: 'error',
-                  error: 'Generated video file was not found on disk',
-                }) + '\n'
-              );
+              sendFinal(200, {
+                success: false,
+                status: 'error',
+                error: 'Generated video file was not found on disk',
+              });
             }
           } else {
             let errorMsg = `FFmpeg execution exited with non-zero code ${code}.`;
@@ -534,21 +553,22 @@ async function startServer() {
               }
             }
             console.error('[DEBUG] FFmpeg exited with non-zero code:', errorMsg);
-            res.write(
-              JSON.stringify({
-                status: 'error',
-                error: errorMsg,
-              }) + '\n'
-            );
+            sendFinal(200, {
+              success: false,
+              status: 'error',
+              error: errorMsg,
+            });
           }
-          res.end();
         });
 
         ffmpegProcess.on('error', (err) => {
           cleanupTempFiles();
           console.error('[DEBUG] FFmpeg process error:', err);
-          res.write(JSON.stringify({ status: 'error', error: `System cannot execute FFmpeg: ${err.message}` }) + '\n');
-          res.end();
+          sendFinal(200, {
+            success: false,
+            status: 'error',
+            error: `System cannot execute FFmpeg: ${err.message}`,
+          });
         });
 
         // Handle client disconnection (request cancellation)
@@ -563,12 +583,7 @@ async function startServer() {
       } catch (err: any) {
         console.error('[DEBUG] server app /api/render error:', err);
         // Ensure we send structured JSON error instead of standard Express HTML page
-        if (!res.headersSent) {
-          res.status(200).json({ success: false, status: 'error', error: err.message || err });
-        } else {
-          res.write(JSON.stringify({ success: false, status: 'error', error: err.message || err }) + '\n');
-          res.end();
-        }
+        sendFinal(200, { success: false, status: 'error', error: err.message || err });
       }
       });
     };
@@ -634,13 +649,40 @@ async function startServer() {
             cleanupTempFiles();
           });
 
+          let sendDirectJson = false;
+          const sendUpdate = (data: any) => {
+            if (sendDirectJson) return;
+            res.write(JSON.stringify(data) + '\n');
+          };
+          const sendFinal = (statusCode: number, data: any) => {
+            if (sendDirectJson) {
+              if (!res.headersSent) {
+                res.status(statusCode).json(data);
+              }
+            } else {
+              res.write(JSON.stringify(data) + '\n');
+              res.end();
+            }
+          };
+
           try {
             runTemporaryCleanup();
 
-            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-            res.setHeader('Transfer-Encoding', 'chunked');
-            res.setHeader('X-Content-Type-Options', 'nosniff');
-            res.setHeader('X-Accel-Buffering', 'no');
+            const origin = req.headers.origin;
+            const isVercel = origin === 'https://stories-maker-eight.vercel.app' || origin === 'https://stories-maker-eight.vercel.app/';
+            const acceptsJson = req.headers.accept && req.headers.accept.includes('application/json');
+            const isCustomApiCall = (req.headers['content-type'] && req.headers['content-type'].includes('application/json')) || (req.body && req.body.directJson === 'true');
+
+            sendDirectJson = isVercel || acceptsJson || isCustomApiCall;
+
+            if (sendDirectJson) {
+              res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            } else {
+              res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+              res.setHeader('Transfer-Encoding', 'chunked');
+              res.setHeader('X-Content-Type-Options', 'nosniff');
+              res.setHeader('X-Accel-Buffering', 'no');
+            }
 
         const videoFile = uploadedFiles.find((f) => f.fieldname === 'video');
         const audioFile = uploadedFiles.find((f) => f.fieldname === 'audio');
@@ -669,7 +711,7 @@ async function startServer() {
         const zip = new JSZip();
 
         for (let p = 0; p < pageCount; p++) {
-          res.write(JSON.stringify({ status: 'rendering', progress: Math.round((p / pageCount) * 100), message: `Starting rendering page ${p + 1} of ${pageCount}...` }) + '\n');
+          sendUpdate({ status: 'rendering', progress: Math.round((p / pageCount) * 100), message: `Starting rendering page ${p + 1} of ${pageCount}...` });
 
           const pageImageBase = uploadedFiles.find(f => f.fieldname === `page_${p}_image_base`);
           
@@ -867,7 +909,7 @@ async function startServer() {
                     if (pageProgress > lastPageProgress) {
                       lastPageProgress = pageProgress;
                       const overallProgress = Math.floor(((p + (pageProgress / 100)) / pageCount) * 100);
-                      res.write(JSON.stringify({ status: 'rendering', progress: overallProgress, message: `Rendering page ${p + 1} of ${pageCount}: ${pageProgress}%` }) + '\n');
+                      sendUpdate({ status: 'rendering', progress: overallProgress, message: `Rendering page ${p + 1} of ${pageCount}: ${pageProgress}%` });
                     }
                   }
                 }
@@ -886,7 +928,7 @@ async function startServer() {
                   if (pageProgress > lastPageProgress) {
                     lastPageProgress = pageProgress;
                     const overallProgress = Math.floor(((p + (pageProgress / 100)) / pageCount) * 100);
-                    res.write(JSON.stringify({ status: 'rendering', progress: overallProgress, message: `Rendering page ${p + 1} of ${pageCount}: ${pageProgress}%` }) + '\n');
+                    sendUpdate({ status: 'rendering', progress: overallProgress, message: `Rendering page ${p + 1} of ${pageCount}: ${pageProgress}%` });
                   }
                 }
               }
@@ -941,7 +983,7 @@ async function startServer() {
         }
 
         // Now bundle the ZIP and save to exportsDir
-        res.write(JSON.stringify({ status: 'rendering', progress: 99, message: 'Creating final ZIP file archive on the server...' }) + '\n');
+        sendUpdate({ status: 'rendering', progress: 99, message: 'Creating final ZIP file archive on the server...' });
         
         const zipContent = await zip.generateAsync({ type: 'nodebuffer' });
         const zipFilename = `bulk-export-${Date.now()}-${Math.floor(Math.random() * 1000)}.zip`;
@@ -959,40 +1001,22 @@ async function startServer() {
             // 5. Log: Download URL returned to frontend
             console.log('[DEBUG] Download URL returned to frontend:', downloadUrl);
 
-            res.write(
-              JSON.stringify({
-                status: 'completed',
-                progress: 100,
-                downloadUrl,
-                success: true,
-                videoUrl: downloadUrl,
-              }) + '\n'
-            );
+            sendFinal(200, {
+              status: 'completed',
+              progress: 100,
+              downloadUrl,
+              success: true,
+              videoUrl: downloadUrl,
+            });
           } else {
             throw new Error('Created ZIP file is empty (0 bytes)');
           }
         } else {
           throw new Error('Created ZIP file was not found on disk');
         }
-        res.end();
           } catch (err: any) {
             console.error('[DEBUG] Server-side bulk render failed:', err);
-            if (!res.headersSent) {
-              res.status(200).json({ success: false, status: 'error', error: err.message || err });
-            } else {
-              try {
-                res.write(
-                  JSON.stringify({
-                    success: false,
-                    status: 'error',
-                    error: err.message || err,
-                  }) + '\n'
-                );
-                res.end();
-              } catch (writeErr) {
-                console.error('[DEBUG] Failed to write bulk render error chunk:', writeErr);
-              }
-            }
+            sendFinal(200, { success: false, status: 'error', error: err.message || err });
           } finally {
             cleanupTempFiles();
           }
