@@ -203,10 +203,10 @@ async function startServer() {
         );
 
         if (audioFile) {
-          console.log('[DEBUG] Audio file uploaded successfully:', audioFile.originalname, 'Size:', audioFile.size);
+          console.log('[DEBUG] MP3 file loaded successfully:', audioFile.originalname, 'Size:', audioFile.size);
         }
         if (voiceOverFile) {
-          console.log('[DEBUG] Voice-over file uploaded successfully:', voiceOverFile.originalname, 'Size:', voiceOverFile.size);
+          console.log('[DEBUG] Voice-over file loaded successfully:', voiceOverFile.originalname, 'Size:', voiceOverFile.size);
         }
 
         const baseImageFile = uploadedFiles.find((f) => f.fieldname === 'image_base');
@@ -373,10 +373,11 @@ async function startServer() {
           console.log('[DEBUG] Sound mixing added background video audio at volume', bgVideoVolume);
         }
 
-        if (audioInputIdx !== -1 && !isMusicMuted) {
-          filterComplex += `[${audioInputIdx}:a]aresample=async=1,volume=${bgMusicVolume}[a_music]; `;
+        if (audioInputIdx !== -1) {
+          const effectiveVolume = isMusicMuted ? 0 : bgMusicVolume;
+          filterComplex += `[${audioInputIdx}:a]aresample=async=1,volume=${effectiveVolume}[a_music]; `;
           activeAudioInputs.push('[a_music]');
-          console.log('[DEBUG] Sound mixing added background music at volume', bgMusicVolume);
+          console.log(`[DEBUG] Audio track detected: index = ${audioInputIdx}. Sound mixing added background music at volume: ${effectiveVolume} (isMusicMuted: ${isMusicMuted}, bgMusicVolume: ${bgMusicVolume})`);
         }
 
         if (voiceInputIdx !== -1) {
@@ -393,7 +394,7 @@ async function startServer() {
             const joinInputs = activeAudioInputs.join('');
             filterComplex += `${joinInputs}amix=inputs=${activeAudioInputs.length}:duration=longest[mixed_audio]; `;
           }
-          console.log('[DEBUG] Audio stream mapped correctly: Inputs =', activeAudioInputs.join(', '), 'Destination = [mixed_audio]');
+          console.log('[DEBUG] Audio track merged successfully: Inputs =', activeAudioInputs.join(', '), 'Destination = [mixed_audio]');
         }
 
         // 5. Clean, sanitize and optimize complex filter to prevent empty filter segments and trailing semicolons
@@ -694,10 +695,10 @@ async function startServer() {
         );
 
         if (audioFile) {
-          console.log('[DEBUG] Audio file uploaded successfully:', audioFile.originalname, 'Size:', audioFile.size);
+          console.log('[DEBUG] MP3 file loaded successfully:', audioFile.originalname, 'Size:', audioFile.size);
         }
         if (voiceOverFile) {
-          console.log('[DEBUG] Voice-over file uploaded successfully:', voiceOverFile.originalname, 'Size:', voiceOverFile.size);
+          console.log('[DEBUG] Voice-over file loaded successfully:', voiceOverFile.originalname, 'Size:', voiceOverFile.size);
         }
 
         const pageCount = parseInt(req.body.page_count || '0');
@@ -831,10 +832,11 @@ async function startServer() {
             console.log(`[DEBUG] Page ${p + 1} sound mixing added background video audio at volume`, bgVideoVolume);
           }
 
-          if (audioInputIdx !== -1 && !isMusicMuted) {
-            filterComplex += `[${audioInputIdx}:a]aresample=async=1,volume=${bgMusicVolume}[a_music]; `;
+          if (audioInputIdx !== -1) {
+            const effectiveVolume = isMusicMuted ? 0 : bgMusicVolume;
+            filterComplex += `[${audioInputIdx}:a]aresample=async=1,volume=${effectiveVolume}[a_music]; `;
             activeAudioInputs.push('[a_music]');
-            console.log(`[DEBUG] Page ${p + 1} sound mixing added background music at volume`, bgMusicVolume);
+            console.log(`[DEBUG] Page ${p + 1} Audio track detected: index = ${audioInputIdx}. Sound mixing added background music at volume: ${effectiveVolume} (isMusicMuted: ${isMusicMuted}, bgMusicVolume: ${bgMusicVolume})`);
           }
 
           if (voiceInputIdx !== -1) {
@@ -851,7 +853,7 @@ async function startServer() {
               const joinInputs = activeAudioInputs.join('');
               filterComplex += `${joinInputs}amix=inputs=${activeAudioInputs.length}:duration=longest[mixed_audio]; `;
             }
-            console.log(`[DEBUG] Page ${p + 1} audio stream mapped correctly: Inputs =`, activeAudioInputs.join(', '), 'Destination = [mixed_audio]');
+            console.log(`[DEBUG] Page ${p + 1} Audio track merged successfully: Inputs =`, activeAudioInputs.join(', '), 'Destination = [mixed_audio]');
           }
 
           const cleanedFilterComplex = filterComplex

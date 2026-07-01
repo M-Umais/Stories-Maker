@@ -25,7 +25,9 @@ import {
   FileImage,
   Music,
   Volume2,
-  VolumeX
+  VolumeX,
+  Sparkles,
+  LayoutGrid
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toPng, toJpeg, toCanvas } from 'html-to-image';
@@ -38,6 +40,261 @@ import JSZip from 'jszip';
 import Papa from 'papaparse';
 
 type TabType = 'profile' | 'typography' | 'background' | 'footer' | 'pictext';
+
+export const TEXT_STYLE_PRESETS = [
+  {
+    id: 'john-wick',
+    name: 'John Wick Cinematic Quote',
+    category: 'Cinematic & Subtitles',
+    fontFamily: 'font-unbounded',
+    fontWeight: '900',
+    fontStyle: 'normal',
+    fontSize: 52,
+    lineHeight: 1.15,
+    letterSpacing: -1,
+    textColor: '#ffffff',
+    highlightColor: '#ff3b30',
+    textOutlineColor: '#ff3b30',
+    textOutlineWidth: 4,
+    textShadowColor: '#000000',
+    textShadowBlur: 6,
+    textShadowOffsetX: 3,
+    textShadowOffsetY: 3,
+    boxHighlight: false,
+    textAlign: 'center' as const
+  },
+  {
+    id: 'netflix-subtitle',
+    name: 'Netflix Classic Subtitle',
+    category: 'Cinematic & Subtitles',
+    fontFamily: 'font-sans',
+    fontWeight: '700',
+    fontStyle: 'normal',
+    fontSize: 38,
+    lineHeight: 1.3,
+    letterSpacing: 0,
+    textColor: '#facc15',
+    highlightColor: '#ffffff',
+    textOutlineColor: '#000000',
+    textOutlineWidth: 2,
+    textShadowColor: '#000000',
+    textShadowBlur: 4,
+    textShadowOffsetX: 2,
+    textShadowOffsetY: 2,
+    boxHighlight: false,
+    textAlign: 'center' as const
+  },
+  {
+    id: 'imax-doc',
+    name: 'IMAX Wide Documentary',
+    category: 'Cinematic & Subtitles',
+    fontFamily: 'font-oswald',
+    fontWeight: '400',
+    fontStyle: 'normal',
+    fontSize: 44,
+    lineHeight: 1.25,
+    letterSpacing: 3,
+    textColor: '#ffffff',
+    highlightColor: '#38bdf8',
+    textOutlineColor: '#000000',
+    textOutlineWidth: 1.5,
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowBlur: 8,
+    textShadowOffsetX: 0,
+    textShadowOffsetY: 2,
+    boxHighlight: false,
+    textAlign: 'center' as const
+  },
+  {
+    id: 'editorial-serif-garamond',
+    name: 'Classic Editorial (EB Garamond)',
+    category: 'Elegant & Editorial Serif',
+    fontFamily: 'font-garamond',
+    fontWeight: '400',
+    fontStyle: 'italic',
+    fontSize: 46,
+    lineHeight: 1.5,
+    letterSpacing: 0,
+    textColor: '#1c1917',
+    highlightColor: '#b45309',
+    textOutlineColor: '#ffffff',
+    textOutlineWidth: 0,
+    textShadowColor: 'transparent',
+    textShadowBlur: 0,
+    textShadowOffsetX: 0,
+    textShadowOffsetY: 0,
+    boxHighlight: false,
+    textAlign: 'left' as const
+  },
+  {
+    id: 'playfair-literary',
+    name: 'Warm Literary (Playfair)',
+    category: 'Elegant & Editorial Serif',
+    fontFamily: 'font-playfair',
+    fontWeight: '700',
+    fontStyle: 'normal',
+    fontSize: 50,
+    lineHeight: 1.4,
+    letterSpacing: 0.5,
+    textColor: '#2d2424',
+    highlightColor: '#b91c1c',
+    textOutlineColor: '#ffffff',
+    textOutlineWidth: 0,
+    textShadowColor: 'rgba(0,0,0,0.05)',
+    textShadowBlur: 2,
+    textShadowOffsetX: 1,
+    textShadowOffsetY: 1,
+    boxHighlight: false,
+    textAlign: 'center' as const
+  },
+  {
+    id: 'poetica-baskerville',
+    name: 'Poetica Minimal (Baskerville)',
+    category: 'Elegant & Editorial Serif',
+    fontFamily: 'font-baskerville',
+    fontWeight: '400',
+    fontStyle: 'italic',
+    fontSize: 42,
+    lineHeight: 1.6,
+    letterSpacing: 1,
+    textColor: '#ffffff',
+    highlightColor: '#f59e0b',
+    textOutlineColor: '#000000',
+    textOutlineWidth: 0,
+    textShadowColor: 'rgba(0,0,0,0.6)',
+    textShadowBlur: 10,
+    textShadowOffsetX: 1,
+    textShadowOffsetY: 2,
+    boxHighlight: false,
+    textAlign: 'center' as const
+  },
+  {
+    id: 'brutalist-punch',
+    name: 'Brutalist Punchy Bold',
+    category: 'Modern Headline & Social',
+    fontFamily: 'font-unbounded',
+    fontWeight: '900',
+    fontStyle: 'normal',
+    fontSize: 58,
+    lineHeight: 1.1,
+    letterSpacing: -2,
+    textColor: '#ffffff',
+    highlightColor: '#f43f5e',
+    textOutlineColor: '#000000',
+    textOutlineWidth: 0,
+    textShadowColor: '#000000',
+    textShadowBlur: 12,
+    textShadowOffsetX: 4,
+    textShadowOffsetY: 4,
+    boxHighlight: true,
+    textAlign: 'center' as const
+  },
+  {
+    id: 'clean-tech-dm',
+    name: 'Modern Tech (DM Sans)',
+    category: 'Modern Headline & Social',
+    fontFamily: 'font-dm-sans',
+    fontWeight: '800',
+    fontStyle: 'normal',
+    fontSize: 62,
+    lineHeight: 1.15,
+    letterSpacing: -1.5,
+    textColor: '#ffffff',
+    highlightColor: '#3b82f6',
+    textOutlineColor: '#000000',
+    textOutlineWidth: 0,
+    textShadowColor: 'rgba(0,0,0,0.4)',
+    textShadowBlur: 8,
+    textShadowOffsetX: 0,
+    textShadowOffsetY: 3,
+    boxHighlight: false,
+    textAlign: 'left' as const
+  },
+  {
+    id: 'bento-block-poppins',
+    name: 'Bento Headline Block',
+    category: 'Modern Headline & Social',
+    fontFamily: 'font-poppins',
+    fontWeight: '800',
+    fontStyle: 'normal',
+    fontSize: 54,
+    lineHeight: 1.2,
+    letterSpacing: -1,
+    textColor: '#000000',
+    highlightColor: '#10b981',
+    textOutlineColor: '#ffffff',
+    textOutlineWidth: 0,
+    textShadowColor: 'transparent',
+    textShadowBlur: 0,
+    textShadowOffsetX: 0,
+    textShadowOffsetY: 0,
+    boxHighlight: true,
+    textAlign: 'center' as const
+  },
+  {
+    id: 'threads-minimalist',
+    name: 'Threads Minimalist Post',
+    category: 'Modern Headline & Social',
+    fontFamily: 'font-sans',
+    fontWeight: '600',
+    fontStyle: 'normal',
+    fontSize: 40,
+    lineHeight: 1.35,
+    letterSpacing: -0.5,
+    textColor: '#ffffff',
+    highlightColor: '#ec4899',
+    textOutlineColor: '#000000',
+    textOutlineWidth: 0,
+    textShadowColor: 'rgba(0,0,0,0.2)',
+    textShadowBlur: 5,
+    textShadowOffsetX: 0,
+    textShadowOffsetY: 1,
+    boxHighlight: false,
+    textAlign: 'left' as const
+  },
+  {
+    id: 'synthwave-cyber',
+    name: 'Synthwave Glow Neon',
+    category: 'Futuristic & Cyber Mono',
+    fontFamily: 'font-cascadia-mono',
+    fontWeight: '700',
+    fontStyle: 'normal',
+    fontSize: 38,
+    lineHeight: 1.4,
+    letterSpacing: 0,
+    textColor: '#36f0f0',
+    highlightColor: '#f43f5e',
+    textOutlineColor: '#000000',
+    textOutlineWidth: 0,
+    textShadowColor: '#f43f5e',
+    textShadowBlur: 14,
+    textShadowOffsetX: 0,
+    textShadowOffsetY: 0,
+    boxHighlight: false,
+    textAlign: 'center' as const
+  },
+  {
+    id: 'matrix-terminal-mono',
+    name: 'Matrix Retro Terminal',
+    category: 'Futuristic & Cyber Mono',
+    fontFamily: 'font-ibm-plex-mono',
+    fontWeight: '400',
+    fontStyle: 'normal',
+    fontSize: 34,
+    lineHeight: 1.5,
+    letterSpacing: 0.5,
+    textColor: '#22c55e',
+    highlightColor: '#ffffff',
+    textOutlineColor: '#000000',
+    textOutlineWidth: 0,
+    textShadowColor: '#15803d',
+    textShadowBlur: 10,
+    textShadowOffsetX: 0,
+    textShadowOffsetY: 0,
+    boxHighlight: false,
+    textAlign: 'left' as const
+  }
+];
 
 // Background-safe high-precision delay using a singleton Web Worker to avoid browser background throttling
 let timingWorker: Worker | null = null;
@@ -382,13 +639,26 @@ export default function App() {
     }
 
     // Pre-mix both music and voiceover audios if present
+    if (uploadedMusicBuffer) {
+      console.log(`[DEBUG] Audio track detected for background music: ${uploadedMusicBuffer.duration.toFixed(2)}s, sampleRate: ${uploadedMusicBuffer.sampleRate}Hz, channels: ${uploadedMusicBuffer.numberOfChannels}`);
+    }
+    if (voiceOverBuffer) {
+      console.log(`[DEBUG] Audio track detected for voice-over: ${voiceOverBuffer.duration.toFixed(2)}s, sampleRate: ${voiceOverBuffer.sampleRate}Hz, channels: ${voiceOverBuffer.numberOfChannels}`);
+    }
+
     const finalMixedAudioBuffer = await mixAudioBuffers(
       uploadedMusicBuffer,
       voiceOverBuffer,
       voiceVolume,
-      voiceOverBuffer ? 0.15 : 1.0,
+      isMusicMuted ? 0 : bgMusicVolume,
       duration
     );
+
+    if (finalMixedAudioBuffer) {
+      console.log(`[DEBUG] Audio track merged successfully! Mixed AudioBuffer duration: ${finalMixedAudioBuffer.duration.toFixed(2)}s, sample rate: ${finalMixedAudioBuffer.sampleRate}Hz, channels: ${finalMixedAudioBuffer.numberOfChannels}`);
+    } else {
+      console.log("[DEBUG] No audio tracks to merge.");
+    }
 
     const muxer = new Muxer({
       target: new ArrayBufferTarget(),
@@ -695,7 +965,13 @@ export default function App() {
       if (!buffer || buffer.byteLength === 0) {
         throw new Error('Exported video is empty');
       }
-      return new Blob([buffer], { type: 'video/mp4' });
+      const blob = new Blob([buffer], { type: 'video/mp4' });
+      if (finalMixedAudioBuffer) {
+        console.log('[DEBUG] Audio stream exists in the final MP4 (size:', blob.size, 'bytes, type:', blob.type, ')');
+      } else {
+        console.log('[DEBUG] Exported MP4 successfully (size:', blob.size, 'bytes, video-only)');
+      }
+      return blob;
 
     } catch (err) {
       try {
@@ -799,13 +1075,15 @@ export default function App() {
               document.body.appendChild(audio);
 
               const bgGain = pcmAudioCtx.createGain();
-              bgGain.gain.setValueAtTime(voiceOverUrl ? 0.15 : 1.0, 0);
+              const effectiveVolume = isMusicMuted ? 0 : bgMusicVolume;
+              bgGain.gain.setValueAtTime(effectiveVolume, 0);
 
               const bgSourceNode = pcmAudioCtx.createMediaElementSource(audio);
               bgSourceNode.connect(bgGain);
               bgGain.connect(audioStreamDestination);
               
               audio.play().catch(e => console.log('Background music fallback play error:', e));
+              console.log('[DEBUG] Fallback MediaRecorder: Audio track detected for background music. Applied volume:', effectiveVolume);
             }
 
             if (voiceOverUrl) {
@@ -824,12 +1102,13 @@ export default function App() {
               voGain.connect(audioStreamDestination);
 
               voAudio.play().catch(e => console.log('VoiceOver media recorder fallback play error:', e));
+              console.log('[DEBUG] Fallback MediaRecorder: Audio track detected for voice-over. Applied volume:', voiceVolume);
             }
 
             const tracks = audioStreamDestination.stream.getAudioTracks();
             if (tracks.length > 0) {
               stream.addTrack(tracks[0]);
-              console.log('[DEBUG] Fallback MediaRecorder audio track mixed and attached.');
+              console.log('[DEBUG] Fallback MediaRecorder: Audio track merged successfully.');
             }
           } catch (e) {
             console.error("Failed to attach AudioContext tracks to MediaRecorder fallback:", e);
@@ -977,6 +1256,11 @@ export default function App() {
 
         mediaRecorder.stop();
         const recordedBlob = await onStopPromise;
+        if (uploadedMusicUrl || voiceOverUrl) {
+          console.log('[DEBUG] Fallback MediaRecorder: Audio stream exists in the final MP4 (size:', recordedBlob.size, 'bytes)');
+        } else {
+          console.log('[DEBUG] Fallback MediaRecorder: Exported video successfully without audio track.');
+        }
         resolve(recordedBlob);
 
       } catch (error) {
@@ -1148,6 +1432,7 @@ export default function App() {
   const [customHighlightColor, setCustomHighlightColor] = useState('#808080'); // Default grey like screenshot
   
   // Typography State
+  const [textMove, setTextMove] = useState<number>(0);
   const [storyText, setStoryText] = useState('Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [[Again?]] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...');
   const [highlightColor, setHighlightColor] = useState('#150621');
   const [textColor, setTextColor] = useState('#150621');
@@ -1163,9 +1448,20 @@ export default function App() {
   const [boldParagraphIndex, setBoldParagraphIndex] = useState<number | null>(null);
   const [storyImage, setStoryImage] = useState<string | null>(null);
   const [storyImageHeight, setStoryImageHeight] = useState<number>(750);
-  const [storyImageRadius, setStoryImageRadius] = useState<number>(16);
+  const [storyImageRadius, setStoryImageRadius] = useState<number>(0);
+  const [storyImageSpacing, setStoryImageSpacing] = useState<number>(0);
   const [storyImageFit, setStoryImageFit] = useState<'cover' | 'contain' | 'fill'>('cover');
   const [imagePosition, setImagePosition] = useState<'above-profile' | 'below-profile'>('below-profile');
+
+  // Text Outline & Shadow customization
+  const [textOutlineColor, setTextOutlineColor] = useState('#ff3b30');
+  const [textOutlineWidth, setTextOutlineWidth] = useState(0);
+  const [textShadowColor, setTextShadowColor] = useState('#000000');
+  const [textShadowBlur, setTextShadowBlur] = useState(0);
+  const [textShadowOffsetX, setTextShadowOffsetX] = useState(0);
+  const [textShadowOffsetY, setTextShadowOffsetY] = useState(0);
+  const [isOutlineEnabled, setIsOutlineEnabled] = useState(false);
+  const [isShadowEnabled, setIsShadowEnabled] = useState(false);
 
   // Background State
   const [bgStyle, setBgStyle] = useState<'solid' | 'gradient' | 'image'>('solid');
@@ -1435,21 +1731,86 @@ export default function App() {
   const bulkStoryImageInputRef = useRef<HTMLInputElement>(null);
 
   const handleReset = () => {
+    // Presets and Tab
     applyPreset(TEMPLATE_PRESETS[1].id);
     setActiveTab('profile');
     setExportDuration(31);
+
+    // Profile settings
     setProfileImage('https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=400&h=400');
     setPosterName('Buried Bell');
     setSubtitle('5h ago');
     setShowPosterName(true);
     setShowSubtitle(true);
-    setStoryText('Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [Again?] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...');
+    setNameSize(82);
+    setNameHasBg(false);
+    setSubtitleSize(44);
+    setSubtitleHasBg(false);
+    setAvatarBorder(true);
+    setAvatarBorderColor('#ffffff');
+    setNameFont('font-merriweather');
+    setSubFont('font-merriweather');
+    setScribbleStyle('none');
+    setProfileMove(0);
+    setProfilePosition('outside');
+    setCardMove(0);
+    setFooterMove(0);
+    setCustomHighlightColor('#808080');
+
+    // Typography/Text settings
+    setStoryText('Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [[Again?]] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...');
     setBoldParagraphIndex(null);
     setStoryImage(null);
     setStoryImageHeight(750);
-    setStoryImageRadius(16);
+    setStoryImageRadius(0);
+    setStoryImageSpacing(0);
     setStoryImageFit('cover');
     setImagePosition('below-profile');
+    
+    // Position/offsets
+    setTextMove(0);
+
+    // Fonts, colors and spacing
+    setFontFamily('font-roboto-condensed');
+    setFontWeight('700');
+    setTextAlign('left');
+    setFontStyle('normal');
+    setLineHeight(1.25);
+    setLetterSpacing(0);
+    setHighlightUnderline(false);
+    setBoxHighlight(false);
+
+    // Outline and Shadow
+    setIsOutlineEnabled(false);
+    setTextOutlineWidth(0);
+    setTextOutlineColor('#ff3b30');
+    setIsShadowEnabled(false);
+    setTextShadowBlur(0);
+    setTextShadowOffsetX(0);
+    setTextShadowOffsetY(0);
+    setTextShadowColor('#000000');
+
+    // Background settings
+    setBgStyle('solid');
+    setBgColor('#CEADE1');
+    setBgImage(null);
+    setBgImageOverlay(20);
+    setGradEnd('#FF6347');
+    setCardColor('#FAF2FB');
+    setCardRadius(36);
+    setCardPadding(60);
+    setCardTransparency(100);
+    setShowCard(true);
+    setShowProfile(true);
+    setShowDots(true);
+    setFullImageOnly(null);
+    setRemovePaddingWhenHidden(false);
+    setVideoBackground(null);
+    setPreviousBgStyle(null);
+
+    // Bulk settings
+    setIsBulkMode(false);
+    setIsPicTextBulk(false);
     setBulkStories([
       {
         text: 'Aitah For Telling My Brother His [Girlfriend] Is Not Allowed In My House [Again?] I haven\'t seen my brother in [5 years] due to both of us being in the military. He finally came to [visit] with his [girlfriend] that he\'s been with for [3 years.] His [visit] it already cut from 2 weeks to 4 days because she has to go back to [work.] They also brought their dog, but [forgot] the kennel, so I...',
@@ -1457,53 +1818,42 @@ export default function App() {
         highlightColor: '#150621'
       }
     ]);
+
+    // Footer settings
+    setShowFooter(true);
     setFooterText("CONTINUE READING IN COMMENT");
-    setNameSize(82);
-    setNameHasBg(false);
-    setSubtitleSize(44);
-    setSubtitleHasBg(false);
-    setFontSize(62);
-    setFontWeight('700');
-    setTextAlign('left');
-    setFontStyle('normal');
-    setLineHeight(1.25);
-    setLetterSpacing(0);
-    setHighlightUnderline(false);
+    setFooterBgColor('#ffffff');
+    setFooterBgStyle('text');
+    setFooterTextColor('#150621');
+    setFooterFont('font-merriweather');
     setFooterFontSize(32);
     setFooterBorderWidth(0);
     setFooterBorderColor('#000000');
-    setCardRadius(36);
-    setCardPadding(60);
-    setCardTransparency(100);
-    setScribbleStyle('none');
-    setProfileMove(0);
-    setProfilePosition('outside');
-    setCardMove(0);
-    setFooterMove(0);
-    setCustomHighlightColor('#808080');
-    setFooterBgStyle('text');
-    setFooterBgColor('#ffffff');
-    setBgColor('#CEADE1');
-    setBgStyle('solid');
-    setBgImage(null);
-    setBgImageOverlay(20);
-    setGradEnd('#FF6347');
-    setCardColor('#FAF2FB');
-    setNameColor('#2D0D44');
-    setSubtitleColor('#8148B0');
-    setTextColor('#150621');
-    setHighlightColor('#150621');
-    setFooterTextColor('#150621');
-    setAvatarBorder(true);
-    setAvatarBorderColor('#ffffff');
-    setShowCard(true);
-    setShowFooter(true);
-    setShowProfile(true);
-    setShowDots(true);
-    setFullImageOnly(null);
-    setVideoBackground(null);
-    setPreviousBgStyle(null);
-    setRemovePaddingWhenHidden(false);
+
+    // Audio & Voice-over
+    setIsBgVideoMuted(false);
+    setBgVideoVolume(0.5);
+    setUploadedMusicFile(null);
+    setUploadedMusicUrl(null);
+    setUploadedMusicBuffer(null);
+    setIsMusicMuted(false);
+    setBgMusicVolume(0.15);
+    setVoiceOverFile(null);
+    setVoiceOverUrl(null);
+    setVoiceOverBuffer(null);
+    setVoiceOverDuration(0);
+    setVoiceOverPlaybackTime(0);
+    setIsPlayingVoiceOver(false);
+    setVoiceOverHighlightColor('#f59e0b');
+    setVoiceOverHighlightMode('text');
+    setVoiceOverDimInactive(false);
+    setVoiceOverSyncMode('sentence');
+    setIsVoiceOverMuted(false);
+    setVoiceVolume(1.0);
+    setSentenceTimings([]);
+    setActiveSentenceIndex(null);
+    setCurrentCaptureCardIdx(null);
+    setCurrentCaptureCardTimings([]);
   };
 
   const handleNewPoster = () => {
@@ -1558,6 +1908,41 @@ export default function App() {
       ...story,
       highlightColor: preset.typography.highlightColor
     })));
+  };
+
+  const applyReferenceLayout = () => {
+    // 1. Hide card, profile details, dots, and footer to mimic standard full screen video overlays
+    setShowCard(false);
+    setShowProfile(false);
+    setShowFooter(false);
+    setShowDots(false);
+    
+    // 2. Set background style to image style to show the background image/video
+    setBgStyle('image');
+    setBgImageOverlay(35); // Slight dark overlay for maximum caption legibility
+    
+    // 3. Set typography to high-impact bold centered sans-serif
+    setFontFamily('font-unbounded'); // Very bold display sans-serif
+    setFontWeight('900'); // Ultra bold / black weight
+    setFontStyle('normal');
+    setFontSize(54);
+    setLineHeight(1.15); // Tight movie quote spacing
+    setLetterSpacing(-1);
+    setTextColor('#ffffff'); // High contrast white
+    setHighlightColor('#ff3b30'); // Electric red outline/accent highlights
+    
+    // 4. Set red text outlines and thick dark shadows to pop off ANY cinematic scene
+    setTextOutlineColor('#ff3b30');
+    setTextOutlineWidth(4);
+    setTextShadowColor('#000000');
+    setTextShadowBlur(6);
+    setTextShadowOffsetX(3);
+    setTextShadowOffsetY(3);
+    setBoxHighlight(false);
+    setTextAlign('center');
+    
+    // 5. Ensure inline top images/media are hidden so that the background image fills the poster
+    setStoryImage(null);
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1646,6 +2031,66 @@ export default function App() {
         setIsMusicDecoding(false);
       }
     }
+  };
+
+  const ensureAudioBuffersReady = async (): Promise<boolean> => {
+    console.log("[DEBUG] --- STARTING AUDIO READINESS VALIDATION ---");
+    if (uploadedMusicFile) {
+      console.log(`[DEBUG] MP3 background music file uploaded: ${uploadedMusicFile.name}, size: ${uploadedMusicFile.size} bytes`);
+      if (isMusicDecoding) {
+        console.log("[DEBUG] Background music is currently decoding. Waiting for decode to finish...");
+        let attempts = 0;
+        while (isMusicDecoding && !uploadedMusicBuffer && attempts < 100) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          attempts++;
+        }
+      }
+      if (!uploadedMusicBuffer) {
+        console.log("[DEBUG] AudioBuffer is missing for background music. Decoding now on-the-fly...");
+        setIsMusicDecoding(true);
+        try {
+          const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+          const arrayBuffer = await uploadedMusicFile.arrayBuffer();
+          const decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+          setUploadedMusicBuffer(decodedBuffer);
+          console.log(`[DEBUG] MP3 background music loaded successfully and decoded on-the-fly! Duration: ${decodedBuffer.duration.toFixed(2)}s, Channels: ${decodedBuffer.numberOfChannels}, Sample Rate: ${decodedBuffer.sampleRate}Hz`);
+        } catch (err) {
+          console.error("[DEBUG] Failed to decode uploaded background music on-the-fly:", err);
+          alert("Could not process the uploaded background music file. Please ensure it is a valid audio file.");
+          setIsMusicDecoding(false);
+          return false;
+        } finally {
+          setIsMusicDecoding(false);
+        }
+      } else {
+        console.log(`[DEBUG] MP3 background music is already decoded! Duration: ${uploadedMusicBuffer.duration.toFixed(2)}s, Channels: ${uploadedMusicBuffer.numberOfChannels}, Sample Rate: ${uploadedMusicBuffer.sampleRate}Hz`);
+      }
+    } else {
+      console.log("[DEBUG] No MP3 background music file uploaded.");
+    }
+
+    if (voiceOverFile) {
+      console.log(`[DEBUG] Voice-over file uploaded: ${voiceOverFile.name}, size: ${voiceOverFile.size} bytes`);
+      if (!voiceOverBuffer) {
+        console.log("[DEBUG] AudioBuffer is missing for voice-over. Decoding now on-the-fly...");
+        try {
+          const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+          const arrayBuffer = await voiceOverFile.arrayBuffer();
+          const decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+          setVoiceOverBuffer(decodedBuffer);
+          console.log(`[DEBUG] Voice-over audio loaded successfully and decoded on-the-fly! Duration: ${decodedBuffer.duration.toFixed(2)}s, Channels: ${decodedBuffer.numberOfChannels}, Sample Rate: ${decodedBuffer.sampleRate}Hz`);
+        } catch (err) {
+          console.error("[DEBUG] Failed to decode uploaded voice-over on-the-fly:", err);
+          alert("Could not process the uploaded voice-over file. Please ensure it is a valid audio file.");
+          return false;
+        }
+      } else {
+        console.log(`[DEBUG] Voice-over audio is already decoded! Duration: ${voiceOverBuffer.duration.toFixed(2)}s, Channels: ${voiceOverBuffer.numberOfChannels}, Sample Rate: ${voiceOverBuffer.sampleRate}Hz`);
+      }
+    }
+
+    console.log("[DEBUG] --- AUDIO READINESS VALIDATION SUCCESSFUL ---");
+    return true;
   };
 
   const handleCsvUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1749,6 +2194,9 @@ export default function App() {
   const handleBulkDownload = useCallback(async () => {
     const cardElements = document.querySelectorAll('.bulk-poster-card');
     if (cardElements.length === 0) return;
+
+    const audioReady = await ensureAudioBuffersReady();
+    if (!audioReady) return;
 
     cancelExportRef.current = false;
     setIsExporting(true);
@@ -2335,6 +2783,11 @@ export default function App() {
     if (previewRef.current === null) return;
     const node = previewRef.current;
     
+    if (type === 'video') {
+      const audioReady = await ensureAudioBuffersReady();
+      if (!audioReady) return;
+    }
+
     cancelExportRef.current = false;
     setIsExporting(true);
     
@@ -3129,7 +3582,7 @@ export default function App() {
     bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly, removePaddingWhenHidden,
     videoBackground, isExporting, boldParagraphIndex,
     isBgVideoMuted, bgVideoVolume,
-    storyImage, storyImageHeight, storyImageRadius, storyImageFit, imagePosition,
+    storyImage, storyImageHeight, storyImageRadius, storyImageSpacing, storyImageFit, imagePosition,
     sentenceTimings,
     activeSentenceIndex,
     voiceOverHighlightColor,
@@ -3138,7 +3591,14 @@ export default function App() {
     voiceOverPlaybackTime,
     voiceOverSyncMode,
     voiceOverDuration,
-    isPicTextMode: activeTab === 'pictext'
+    isPicTextMode: activeTab === 'pictext',
+    textOutlineColor,
+    textOutlineWidth: isOutlineEnabled ? textOutlineWidth : 0,
+    textShadowColor,
+    textShadowBlur: isShadowEnabled ? textShadowBlur : 0,
+    textShadowOffsetX,
+    textShadowOffsetY,
+    textMove
   };
 
   return (
@@ -3781,7 +4241,7 @@ export default function App() {
         </div>
 
         {/* Editor Controls */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-6">
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
           <AnimatePresence mode="wait">
             {activeTab === 'profile' && (
               <motion.div
@@ -4133,6 +4593,78 @@ export default function App() {
                 exit={{ opacity: 0, x: 10 }}
                 className="space-y-6 pb-20"
               >
+                {/* Preset Text Styles - 1 Click Apply */}
+                <div className="p-3.5 bg-gradient-to-br from-blue-500/10 via-[#1f222b] to-[#14161b] rounded-xl border border-blue-500/10 space-y-4">
+                  <div className="flex items-center gap-1.5">
+                    <Sparkles size={14} className="text-yellow-400 animate-pulse" />
+                    <label className="text-[10px] font-black text-gray-200 uppercase tracking-widest block font-sans">1-Click Typography Presets</label>
+                  </div>
+                  <p className="text-[10px] text-gray-400 leading-normal">Apply dynamic pre-styled typography setups instantly. Customize them further below.</p>
+                  
+                  {/* Grouped list of presets */}
+                  {Array.from(new Set(TEXT_STYLE_PRESETS.map((p) => p.category))).map((category) => {
+                    const presetsInCategory = TEXT_STYLE_PRESETS.filter((p) => p.category === category);
+                    return (
+                      <div key={category} className="space-y-1.5 pt-1 first:pt-0">
+                        <span className="text-[9px] font-black text-blue-400/80 uppercase tracking-widest block pl-1">{category}</span>
+                        <div className="grid grid-cols-1 gap-1.5">
+                          {presetsInCategory.map((p) => {
+                            const isSelected = fontFamily === p.fontFamily && fontWeight === p.fontWeight && textOutlineWidth === p.textOutlineWidth && textOutlineColor === p.textOutlineColor && fontSize === p.fontSize;
+                            return (
+                              <button
+                                key={p.id}
+                                type="button"
+                                onClick={() => {
+                                  setIsOutlineEnabled(p.textOutlineWidth > 0);
+                                  setIsShadowEnabled(p.textShadowBlur > 0);
+                                  setFontFamily(p.fontFamily);
+                                  setFontWeight(p.fontWeight);
+                                  setFontStyle(p.fontStyle);
+                                  setFontSize(p.fontSize);
+                                  setLineHeight(p.lineHeight);
+                                  setLetterSpacing(p.letterSpacing);
+                                  setTextColor(p.textColor);
+                                  setHighlightColor(p.highlightColor);
+                                  setTextOutlineColor(p.textOutlineColor);
+                                  setTextOutlineWidth(p.textOutlineWidth);
+                                  setTextShadowColor(p.textShadowColor);
+                                  setTextShadowBlur(p.textShadowBlur);
+                                  setTextShadowOffsetX(p.textShadowOffsetX);
+                                  setTextShadowOffsetY(p.textShadowOffsetY);
+                                  setBoxHighlight(p.boxHighlight);
+                                  setTextAlign(p.textAlign);
+                                }}
+                                className={cn(
+                                  "w-full flex items-center justify-between px-3 py-1.5 border rounded-xl text-left transition-all group/preset",
+                                  isSelected 
+                                    ? "bg-[#3b82f6]/15 border-[#3b82f6]/40 text-blue-400" 
+                                    : "bg-[#14161b] hover:bg-[#1c202a] border-[#2a2d35]/65 text-gray-300"
+                                )}
+                              >
+                                <div className="flex flex-col">
+                                  <span className={cn(
+                                    "text-xs font-bold tracking-tight transition-colors",
+                                    isSelected ? "text-blue-400" : "text-gray-200 group-hover/preset:text-white"
+                                  )}>
+                                    {p.name}
+                                  </span>
+                                  <span className="text-[9px] text-gray-500 font-mono mt-0.5">
+                                    {p.fontFamily.replace('font-', '')} • {p.fontSize}px • {p.fontWeight === '900' ? 'Black' : p.fontWeight === '800' ? 'Extra Bold' : p.fontWeight === '700' ? 'Bold' : 'Regular'}
+                                  </span>
+                                </div>
+                                <Sparkles size={11} className={cn(
+                                  "transition-transform group-hover/preset:rotate-12",
+                                  isSelected ? "text-blue-400" : "text-gray-500 group-hover/preset:text-blue-400"
+                                )} />
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
                 <div className="space-y-4">
                   <div className="p-3 bg-[#2a2d35]/30 rounded-xl border border-[#2a2d35] space-y-2">
                     <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block">Text Highlight Style</label>
@@ -4348,11 +4880,29 @@ export default function App() {
                               <select 
                                 value={imagePosition}
                                 onChange={(e: any) => setImagePosition(e.target.value as any)}
-                                className="w-full bg-[#1a1d23] border border-[#30343c] rounded p-1.5 text-xs text-gray-300 outline-none"
+                                className="w-full bg-[#1a1d23] border border-[#30343c] rounded p-1.5 text-xs text-gray-300 outline-none mb-2"
                               >
                                 <option value="below-profile">Below Profile Section</option>
                                 <option value="above-profile">Above Profile Section (At Top)</option>
                               </select>
+                            </div>
+
+                            <div>
+                              <div className="flex justify-between text-[10px] text-gray-500">
+                                <span>IMAGE OUTER SPACING</span>
+                                <span>{storyImageSpacing}px</span>
+                              </div>
+                              <input 
+                                type="range" 
+                                min="0" 
+                                max="64" 
+                                step="2"
+                                value={storyImageSpacing}
+                                // When image is uploaded, we do not add any default left or right margin/padding.
+                                // It displays edge-to-edge by default (0px), unless the user changes spacing manually.
+                                onChange={(e) => setStoryImageSpacing(parseInt(e.target.value))}
+                                className="w-full accent-blue-500"
+                              />
                             </div>
                           </div>
                         </div>
@@ -4647,6 +5197,8 @@ export default function App() {
                       <option value="300">Light</option>
                       <option value="400">Normal</option>
                       <option value="700">Bold</option>
+                      <option value="800">Extra Bold</option>
+                      <option value="900">Black</option>
                     </select>
                   </div>
                 </div>
@@ -4686,7 +5238,8 @@ export default function App() {
                       <span className="text-xs text-gray-400">Solid Box</span>
                     </div>
                   </div>
-                  <div>
+                </div>
+                <div>
                     <div className="flex justify-between items-center mb-1">
                       <div className="flex items-center gap-1.5">
                         <span className="text-xs text-gray-400">Font Size</span>
@@ -4722,7 +5275,187 @@ export default function App() {
                     </div>
                     <input type="range" min="-2" max="10" value={letterSpacing} onChange={(e) => setLetterSpacing(parseInt(e.target.value))} className="w-full" />
                   </div>
-                </div>
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-gray-400">Text Position (Vertical)</span>
+                        <button onClick={() => setTextMove(0)} title="Reset to 0px" className="text-gray-500 hover:text-blue-400 transition-colors">
+                          <RotateCcw size={10} />
+                        </button>
+                      </div>
+                      <span className="text-xs text-gray-500">{textMove} px</span>
+                    </div>
+                    <input type="range" min="-500" max="500" value={textMove} onChange={(e) => setTextMove(parseInt(e.target.value))} className="w-full accent-blue-500" />
+                  </div>
+
+                  {/* Outline and Stroke controls */}
+                  <div className="p-3.5 bg-[#2a2d35]/20 rounded-2xl border border-[#353941]/40 space-y-4 pt-4">
+                    <div className="flex items-center justify-between border-b border-[#2a2d35]/60 pb-2">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block font-sans">Text Outline & Stroke</label>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input 
+                          type="checkbox" 
+                          checked={isOutlineEnabled} 
+                          onChange={(e) => {
+                            setIsOutlineEnabled(e.target.checked);
+                            if (e.target.checked && textOutlineWidth === 0) {
+                              setTextOutlineWidth(2); // set a good default of 2px
+                            }
+                          }}
+                          className="sr-only peer" 
+                        />
+                        <div className="w-8 h-4.5 bg-[#14161b] rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-gray-400 after:border-gray-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-blue-600 peer-checked:after:bg-white"></div>
+                        <span className="ml-2 text-[10px] font-bold text-gray-400 uppercase tracking-wider">On</span>
+                      </label>
+                    </div>
+
+                    {isOutlineEnabled && (
+                      <div className="space-y-4 animate-in fade-in duration-200">
+                        <div>
+                          <div className="flex justify-between items-center mb-1">
+                            <span className="text-xs text-gray-400 font-semibold">Outline Width ({textOutlineWidth}px)</span>
+                            {textOutlineWidth > 0 && (
+                              <button 
+                                onClick={() => {
+                                  setTextOutlineWidth(0);
+                                  setIsOutlineEnabled(false);
+                                }} 
+                                className="text-[10px] text-red-400 hover:text-red-300"
+                              >
+                                Disable
+                              </button>
+                            )}
+                          </div>
+                          <input 
+                            type="range" 
+                            min="0" 
+                            max="8" 
+                            value={textOutlineWidth} 
+                            onChange={(e) => setTextOutlineWidth(parseInt(e.target.value))} 
+                            className="w-full accent-blue-500" 
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] text-gray-400 block font-sans">Outline Color</label>
+                          <div className="flex items-center gap-3">
+                            <input 
+                              type="color" 
+                              value={textOutlineColor} 
+                              onChange={(e) => setTextOutlineColor(e.target.value)} 
+                              className="w-10 h-10 rounded-xl border border-[#353941] cursor-pointer bg-transparent flex-shrink-0" 
+                            />
+                            <input 
+                              type="text" 
+                              value={textOutlineColor} 
+                              onChange={(e) => setTextOutlineColor(e.target.value)} 
+                              className="flex-1 bg-[#1a1d23] border border-[#353941] rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-blue-500" 
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Text Shadow Controls */}
+                  <div className="p-3.5 bg-[#2a2d35]/20 rounded-2xl border border-[#353941]/40 space-y-4 pt-4">
+                    <div className="flex items-center justify-between border-b border-[#2a2d35]/60 pb-2">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block font-sans">Text Shadow</label>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input 
+                          type="checkbox" 
+                          checked={isShadowEnabled} 
+                          onChange={(e) => {
+                            setIsShadowEnabled(e.target.checked);
+                            if (e.target.checked && textShadowBlur === 0) {
+                              setTextShadowBlur(6); // set a good default blur of 6px
+                              setTextShadowOffsetX(2);
+                              setTextShadowOffsetY(2);
+                            }
+                          }}
+                          className="sr-only peer" 
+                        />
+                        <div className="w-8 h-4.5 bg-[#14161b] rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-gray-400 after:border-gray-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-blue-600 peer-checked:after:bg-white"></div>
+                        <span className="ml-2 text-[10px] font-bold text-gray-400 uppercase tracking-wider">On</span>
+                      </label>
+                    </div>
+                    
+                    {isShadowEnabled && (
+                      <div className="space-y-4 animate-in fade-in duration-200">
+                        <div>
+                          <div className="flex justify-between items-center mb-1">
+                            <span className="text-xs text-gray-400 font-semibold">Shadow Blur ({textShadowBlur}px)</span>
+                            {textShadowBlur > 0 && (
+                              <button 
+                                onClick={() => {
+                                  setTextShadowBlur(0);
+                                  setTextShadowOffsetX(0);
+                                  setTextShadowOffsetY(0);
+                                  setIsShadowEnabled(false);
+                                }} 
+                                className="text-[10px] text-red-400 hover:text-red-300"
+                              >
+                                Disable
+                              </button>
+                            )}
+                          </div>
+                          <input 
+                            type="range" 
+                            min="0" 
+                            max="20" 
+                            value={textShadowBlur} 
+                            onChange={(e) => setTextShadowBlur(parseInt(e.target.value))} 
+                            className="w-full accent-blue-500" 
+                          />
+                        </div>
+
+                        <div className="space-y-3.5">
+                          <div>
+                            <label className="text-[11px] text-gray-400 block font-sans mb-1.5">Shadow Color</label>
+                            <div className="flex items-center gap-3">
+                              <input 
+                                type="color" 
+                                value={textShadowColor} 
+                                onChange={(e) => setTextShadowColor(e.target.value)} 
+                                className="w-10 h-10 rounded-xl border border-[#353941] cursor-pointer bg-transparent flex-shrink-0" 
+                              />
+                              <input 
+                                type="text" 
+                                value={textShadowColor} 
+                                onChange={(e) => setTextShadowColor(e.target.value)} 
+                                className="flex-1 bg-[#1a1d23] border border-[#353941] rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-blue-500" 
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <span className="text-[10px] text-gray-400 block mb-1 font-sans">Offset X ({textShadowOffsetX}px)</span>
+                              <input 
+                                type="range" 
+                                min="-15" 
+                                max="15" 
+                                value={textShadowOffsetX} 
+                                onChange={(e) => setTextShadowOffsetX(parseInt(e.target.value))} 
+                                className="w-full accent-blue-500" 
+                              />
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-gray-400 block mb-1 font-sans">Offset Y ({textShadowOffsetY}px)</span>
+                              <input 
+                                type="range" 
+                                min="-15" 
+                                max="15" 
+                                value={textShadowOffsetY} 
+                                onChange={(e) => setTextShadowOffsetY(parseInt(e.target.value))} 
+                                className="w-full accent-blue-500" 
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
               </motion.div>
             )}
 
@@ -5090,6 +5823,44 @@ export default function App() {
                               {uploadedMusicFile.type.startsWith('video/') ? 'Extracted AAC Stream' : 'Mpeg Audio Stream'} • {(uploadedMusicBuffer.sampleRate / 1000).toFixed(1)}kHz • {uploadedMusicBuffer.numberOfChannels === 2 ? 'Stereo' : 'Mono'} • {Math.round(uploadedMusicBuffer.duration)}s
                             </p>
                           )}
+                        </div>
+                      )}
+
+                      {uploadedMusicUrl && !isMusicDecoding && (
+                        <div className="mt-3 p-3 bg-[#2a2d35]/30 rounded-xl border border-[#353941]/40 space-y-2">
+                          <div className="flex justify-between items-center text-[10px]">
+                            <span className="text-gray-400 font-bold uppercase tracking-wider flex items-center gap-1 font-sans">
+                              Background Music Volume
+                              {isMusicMuted && <span className="text-[9px] text-red-500 font-semibold font-mono font-sans">(MUTED)</span>}
+                            </span>
+                            <span className="text-emerald-400 font-extrabold font-mono">{Math.round(bgMusicVolume * 100)}%</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => setIsMusicMuted(!isMusicMuted)}
+                              className={cn(
+                                "p-2 rounded-lg border text-xs transition-colors flex-shrink-0",
+                                isMusicMuted 
+                                  ? "bg-red-500/10 text-red-400 border-red-500/20" 
+                                  : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
+                              )}
+                              title={isMusicMuted ? "Unmute Music" : "Mute Music"}
+                            >
+                              {isMusicMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                            </button>
+                            <input
+                              type="range"
+                              min="0"
+                              max="1"
+                              step="0.01"
+                              value={bgMusicVolume}
+                              onChange={(e) => setBgMusicVolume(parseFloat(e.target.value))}
+                              className="w-full h-1.5 bg-[#1a1d23] outline-none rounded-lg appearance-none cursor-pointer accent-emerald-500 transition-all"
+                              style={{
+                                background: `linear-gradient(to right, #10b981 ${bgMusicVolume * 100}%, #1a1d23 0%)`
+                              }}
+                            />
+                          </div>
                         </div>
                       )}
 
@@ -5745,17 +6516,49 @@ export default function App() {
                               />
                             </div>
 
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-[10px] text-gray-500 block mb-1">IMAGE FIT</label>
+                                <select 
+                                  value={storyImageFit}
+                                  onChange={(e: any) => setStoryImageFit(e.target.value)}
+                                  className="w-full bg-[#1a1d23] border border-[#30343c] rounded p-1.5 text-xs text-gray-300 outline-none"
+                                >
+                                  <option value="cover">Cover (crop)</option>
+                                  <option value="contain">Contain (fit)</option>
+                                  <option value="fill">Fill (stretch)</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-gray-500 block mb-1">CORNERS</label>
+                                <select 
+                                  value={storyImageRadius}
+                                  onChange={(e: any) => setStoryImageRadius(parseInt(e.target.value))}
+                                  className="w-full bg-[#1a1d23] border border-[#30343c] rounded p-1.5 text-xs text-gray-300 outline-none"
+                                >
+                                  <option value="0">Sharp (0px)</option>
+                                  <option value="8">Small (8px)</option>
+                                  <option value="16">Medium (16px)</option>
+                                  <option value="24">Large (24px)</option>
+                                  <option value="36">Card Radius</option>
+                                </select>
+                              </div>
+                            </div>
+
                             <div>
-                              <label className="text-[10px] text-gray-500 block mb-1">IMAGE FIT</label>
-                              <select 
-                                value={storyImageFit}
-                                onChange={(e: any) => setStoryImageFit(e.target.value)}
-                                className="w-full bg-[#1a1d23] border border-[#30343c] rounded p-1.5 text-xs text-gray-300 outline-none"
-                              >
-                                <option value="cover">Cover (crop)</option>
-                                <option value="contain">Contain (fit)</option>
-                                <option value="fill">Fill (stretch)</option>
-                              </select>
+                              <div className="flex justify-between text-[10px] text-gray-500">
+                                <span>IMAGE OUTER SPACING</span>
+                                <span>{storyImageSpacing}px</span>
+                              </div>
+                              <input 
+                                type="range" 
+                                min="0" 
+                                max="64" 
+                                step="2"
+                                value={storyImageSpacing}
+                                onChange={(e) => setStoryImageSpacing(parseInt(e.target.value))}
+                                className="w-full accent-blue-500"
+                              />
                             </div>
                           </div>
                         </div>
@@ -6550,10 +7353,12 @@ function Poster({
   bgImage, bgImageOverlay, showProfile, showDots, fullImageOnly, hColor, removePaddingWhenHidden,
   videoBackground, isExporting, boldParagraphIndex,
   isBgVideoMuted, bgVideoVolume,
-  storyImage, storyImageHeight, storyImageRadius, storyImageFit, isPicTextMode,
+  storyImage, storyImageHeight, storyImageRadius, storyImageSpacing, storyImageFit, isPicTextMode,
   boxHighlight, imagePosition,
   sentenceTimings, activeSentenceIndex, voiceOverHighlightColor, voiceOverHighlightMode, voiceOverDimInactive,
-  voiceOverPlaybackTime, voiceOverSyncMode, voiceOverDuration
+  voiceOverPlaybackTime, voiceOverSyncMode, voiceOverDuration,
+  textOutlineColor, textOutlineWidth, textShadowColor, textShadowBlur, textShadowOffsetX, textShadowOffsetY,
+  textMove
 }: any) {
   const isCardPadded = showCard || !removePaddingWhenHidden;
   const isBlur = scribbleStyle === 'blur' || scribbleStyle === 'title-blur';
@@ -6795,21 +7600,31 @@ function Poster({
       >
         {storyImage ? (
           <div 
-            className="w-full relative overflow-hidden flex-shrink-0"
+            className="w-full relative overflow-hidden flex-shrink-0 transition-all duration-300"
             style={{ 
               height: `${storyImageHeight}px`,
+              paddingLeft: `${storyImageSpacing}px`,
+              paddingRight: `${storyImageSpacing}px`,
+              marginTop: `${storyImageSpacing}px`, // subtle top spacing matching padding
             }}
           >
-            <img 
-              src={storyImage} 
-              alt="Story Media" 
-              className="w-full h-full"
-              style={{ 
-                objectFit: storyImageFit,
+            <div 
+              className="w-full h-full overflow-hidden"
+              style={{
+                borderRadius: `${storyImageRadius}px`,
               }}
-              referrerPolicy="no-referrer"
-              crossOrigin="anonymous"
-            />
+            >
+              <img 
+                src={storyImage} 
+                alt="Story Media" 
+                className="w-full h-full"
+                style={{ 
+                  objectFit: storyImageFit,
+                }}
+                referrerPolicy="no-referrer"
+                crossOrigin="anonymous"
+              />
+            </div>
           </div>
         ) : (
           <div 
@@ -6839,6 +7654,12 @@ function Poster({
               letterSpacing: `${letterSpacing}px`,
               fontWeight: fontWeight || 'normal',
               fontStyle: fontStyle === 'italic' ? 'italic' : 'normal',
+              WebkitTextStroke: textOutlineWidth > 0 ? `${textOutlineWidth}px ${textOutlineColor}` : undefined,
+              paintOrder: textOutlineWidth > 0 ? 'stroke fill' : undefined,
+              textShadow: textShadowBlur > 0 || textShadowOffsetX !== 0 || textShadowOffsetY !== 0 
+                ? `${textShadowOffsetX}px ${textShadowOffsetY}px ${textShadowBlur}px ${textShadowColor}` 
+                : undefined,
+              transform: textMove ? `translateY(${textMove}px)` : undefined,
             }}
           >
             {storyText.split('\n').map((para, index) => {
@@ -7066,7 +7887,13 @@ function Poster({
 
           {/* Story/Top Image - Positioned Above the Profile Section */}
           {storyImage && imagePosition === 'above-profile' && (
-            <div className="w-full px-16 mb-12 flex-shrink-0 z-10">
+            <div 
+              className="w-full mb-12 flex-shrink-0 z-10 transition-all duration-300 animate-in fade-in duration-300"
+              style={{
+                paddingLeft: `${storyImageSpacing}px`,
+                paddingRight: `${storyImageSpacing}px`,
+              }}
+            >
               <div 
                 className="w-full relative overflow-hidden flex-shrink-0"
                 style={{ 
@@ -7103,10 +7930,13 @@ function Poster({
             {/* Story/Top Image - Positioned Below the Profile Section */}
             {storyImage && imagePosition !== 'above-profile' && (
               <div 
-                className="w-full relative overflow-hidden mb-12 flex-shrink-0"
+                className="relative overflow-hidden mb-12 flex-shrink-0 transition-all duration-300"
                 style={{ 
                   height: `${storyImageHeight}px`,
                   borderRadius: `${storyImageRadius}px`,
+                  marginLeft: `calc(-64px + ${storyImageSpacing}px)`,
+                  marginRight: `calc(-64px + ${storyImageSpacing}px)`,
+                  width: `calc(100% + ${(64 - storyImageSpacing) * 2}px)`,
                   boxShadow: showCard ? '0 30px 80px -15px rgba(0,0,0,0.15)' : 'none',
                 }}
               >
@@ -7146,6 +7976,12 @@ function Poster({
                   letterSpacing: `${letterSpacing}px`,
                   fontWeight: fontWeight,
                   fontStyle: fontStyle === 'italic' ? 'italic' : 'normal',
+                  WebkitTextStroke: textOutlineWidth > 0 ? `${textOutlineWidth}px ${textOutlineColor}` : undefined,
+                  paintOrder: textOutlineWidth > 0 ? 'stroke fill' : undefined,
+                  textShadow: textShadowBlur > 0 || textShadowOffsetX !== 0 || textShadowOffsetY !== 0 
+                    ? `${textShadowOffsetX}px ${textShadowOffsetY}px ${textShadowBlur}px ${textShadowColor}` 
+                    : undefined,
+                  transform: textMove ? `translateY(${textMove}px)` : undefined,
                 }}
               >
                 {storyText.split('\n').map((para, index) => {
